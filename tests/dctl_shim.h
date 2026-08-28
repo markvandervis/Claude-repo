@@ -17,8 +17,13 @@
 // ============================================================================
 #pragma once
 
-#include <cmath>
-#include <cstdio>
+#ifdef __cplusplus
+  #include <cmath>
+  #include <cstdio>
+#else
+  #include <math.h>
+  #include <stdio.h>
+#endif
 
 // ---------------------------------------------------------------------------
 //  Qualifiers
@@ -29,9 +34,11 @@
 // ---------------------------------------------------------------------------
 //  Vector types
 // ---------------------------------------------------------------------------
-struct float2 { float x, y; };
-struct float3 { float x, y, z; };
-struct float4 { float x, y, z, w; };
+// typedef form so that the same header works when the DCTL is compiled as C99
+// (which is closer to what Resolve's CUDA / OpenCL backends do) as well as C++
+typedef struct { float x, y; } float2;
+typedef struct { float x, y, z; } float3;
+typedef struct { float x, y, z, w; } float4;
 
 static inline float2 make_float2(float x, float y)                   { float2 v; v.x=x; v.y=y; return v; }
 static inline float3 make_float3(float x, float y, float z)          { float3 v; v.x=x; v.y=y; v.z=z; return v; }

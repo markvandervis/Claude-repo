@@ -82,9 +82,11 @@
 //        Saturation - chroma scaling about the pixel's own luma.  This is
 //                     exactly luma preserving by construction and reaches a
 //                     true neutral at -100.
-//        Luminance  - display domain: hue/saturation-preserving tone gain with
-//                     a highlight roll-off (white stays white, black stays
-//                     black).  Log domain: code-value offset = exposure.
+//        Luminance  - display domain: a hue and saturation preserving tone
+//                     response that fixes both black and white.  Log domain: a
+//                     code-value offset, which is an exposure change.  Linear
+//                     domain: decode, scale, re-encode - an exact exposure
+//                     change.
 //  6.  Neutral protection, luminance preservation and a soft saturation /
 //      gamut protector.
 //  7.  Decode back to the input encoding and cross-fade by Overall Amount.
@@ -483,9 +485,11 @@ __DEVICE__ float ApplyVibrance(float amount, float sat, float hueDeg)
 }
 
 // Restores the luma a hue rotation moved, without undoing the Luminance
-// sliders, which are applied afterwards.  In a log domain the correct exposure
-// analogue is an offset, which also keeps chroma intact; in a display domain it
-// is a gain, which keeps HSV saturation intact and blacks clean.
+// sliders, which are applied afterwards.  When the working domain is log (which
+// includes the linear mode, whose working domain is DaVinci Intermediate) the
+// correct exposure analogue is an offset, which also keeps chroma intact; in a
+// display domain it is a gain, which keeps HSV saturation intact and blacks
+// clean.
 __DEVICE__ float3 PreserveLuminance(float3 c, float lumaBefore, float strength, int encoding)
 {
     if (strength <= 0.0f) return c;
@@ -509,8 +513,9 @@ __DEVICE__ float3 PreserveLuminance(float3 c, float lumaBefore, float strength, 
 //   Display domain : the pixel's value is pushed along a Moebius tone response
 //                    and the whole triplet is rescaled by the same factor, so
 //                    hue and HSV saturation are preserved exactly.  The curve
-//                    fixes both 0 and 1, is its own inverse under gain -> 1/gain
-//                    and has a bounded slope everywhere, so black stays black,
+//                    fixes both 0 and 1, inverts exactly under gain -> 1/gain
+//                    inside the display range and has a bounded slope
+//                    everywhere, so black stays black,
 //                    white stays white and no highlight can be blown out of the
 //                    display range.  Above display white the curve has a pole,
 //                    so it is continued there by a plain gain: values that are
