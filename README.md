@@ -150,7 +150,7 @@ measured. See [Colour-space assumptions](#colour-space-assumptions).
 |---|---|---|---|
 | **Hue** | −100…+100 | 0 | Rotates the region's hue by up to ±30°, which moves a colour roughly one photographic hue band. The rotation is weighted by the region's membership, wraps correctly through 360°, and is a no-op on neutrals. |
 | **Saturation** | −100…+100 | 0 | Scales the region's chroma about its own luma: −100 reaches a true neutral, +100 doubles it. Brightness does not change. |
-| **Luminance** | −100…+100 | 0 | Brightens or darkens the region by up to about one stop without moving hue or saturation. |
+| **Luminance** | −100…+100 | 0 | Brightens or darkens the region without moving hue or saturation. Full travel is exactly ±1 stop in the log and linear modes; in the display mode it is ±1.5 stops of display code value, which lands in a similar place perceptually. |
 
 ### Advanced
 

@@ -638,6 +638,11 @@ __DEVICE__ float3 ApplyColorMixer(float3 w, float hueDeg,
     if (lumAmt != 0.0f) c = ApplyLuminance(c, lumAmt, encoding);
 
     // --- 4. gamut protection ------------------------------------------------
+    // Skipped outright for a pixel no operator reached.  ProtectSaturation is
+    // already a no-op in that case, but testing here keeps the untouched path
+    // free of it and makes the pass-through structural rather than a
+    // consequence of two floats comparing equal.
+    if (kGlobal == 1.0f && hueAmt == 0.0f && satAmt == 0.0f && lumAmt == 0.0f) return c;
     return ProtectSaturation(c, satIn, satProtect);
 }
 

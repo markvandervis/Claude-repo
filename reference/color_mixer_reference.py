@@ -413,6 +413,8 @@ def apply_color_mixer_core(w, hue_deg, d_hue, d_sat, d_lum, global_sat, vibrance
     if lum_amt != 0.0:
         c = apply_luminance(c, lum_amt, encoding)
 
+    if k_global == 1.0 and hue_amt == 0.0 and sat_amt == 0.0 and lum_amt == 0.0:
+        return c
     return protect_saturation(c, sat_in, sat_protect)
 
 
