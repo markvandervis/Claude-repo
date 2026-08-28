@@ -1,0 +1,743 @@
+// ============================================================================
+//  Lightroom_Color_Mixer.dctl
+//  ---------------------------------------------------------------------------
+//  A Lightroom-STYLE (not Lightroom-identical) photographic Colour Mixer for
+//  DaVinci Resolve Studio.  It provides independent Hue / Saturation /
+//  Luminance control over eight overlapping hue regions, plus global
+//  Saturation, Vibrance and a set of protection controls.
+//
+//  Version : 1.0.0
+//  License : MIT
+//
+//  ---------------------------------------------------------------------------
+//  WHAT THIS IS
+//  ---------------------------------------------------------------------------
+//  This is an independent implementation that approximates the *behaviour* of
+//  Adobe Lightroom's Colour Mixer / HSL panel using standard colour-science
+//  techniques.  No Adobe code, data or binary was used, inspected or reverse
+//  engineered.  It is NOT numerically equivalent to Lightroom and must not be
+//  described as such.
+//
+//  ---------------------------------------------------------------------------
+//  COLOUR-SPACE ASSUMPTIONS  (read this before grading)
+//  ---------------------------------------------------------------------------
+//  Hue is not a physical quantity: the hue angle of a pixel depends on the RGB
+//  encoding it is measured in.  "Orange skin at ~30 degrees" is only true in a
+//  perceptually encoded (gamma or log) RGB space.  In scene-linear RGB the very
+//  same pixel measures a much lower hue angle and would be classified as red.
+//  This DCTL therefore always evaluates hue in a perceptual encoding, and the
+//  user must declare what is being fed to it with the "Input Encoding" control:
+//
+//    Display Rec.709 sRGB : input is display-referred and already perceptually
+//                           encoded (Rec.709 / sRGB / Rec.1886 / P3 display,
+//                           nominal 0-1).  The mixer runs directly on it.
+//                           Luminance behaves like a display-referred tone
+//                           gain with a highlight roll-off, so white stays
+//                           white.
+//
+//    Log direct           : input is any log encoding (DaVinci Intermediate,
+//                           ACEScct, LogC, S-Log3, V-Log, Log3G10, ...).  Log
+//                           curves are already roughly perceptually uniform, so
+//                           the mixer runs directly on the log code values and
+//                           Luminance is applied as a code-value offset, which
+//                           is a true scene exposure change (+/-1 stop at
+//                           +/-100).
+//
+//    Scene Linear         : input is scene-linear.  It is encoded to DaVinci
+//                           Intermediate for processing and decoded back
+//                           afterwards, so hue selection stays perceptual and
+//                           Luminance is again a true exposure change.
+//
+//  Only the transfer function is handled.  Primaries (chromaticities) are NEVER
+//  converted: hue angles are measured in whatever primaries you feed in.  With
+//  Rec.709 / P3 / DaVinci Wide Gamut the eight named regions land where you
+//  expect.  With very wide encodings such as ACES AP0 the hue angles are
+//  noticeably different; put a Colour Space Transform in front of the node (and
+//  its inverse behind it) if you want the named regions to match the standard
+//  photographic hue wheel.
+//
+//  Luma is measured with Rec.709 weights (0.2126 / 0.7152 / 0.0722) in the
+//  working encoding.  For other primaries this is an approximation, used only
+//  as a lightness metric - it never leaves the pixel's own colour space.
+//
+//  ---------------------------------------------------------------------------
+//  ALGORITHM OVERVIEW
+//  ---------------------------------------------------------------------------
+//  1.  Optional transfer-function encode to the perceptual working domain.
+//  2.  Measure max / min / chroma / hue / HSV-style saturation / luma.
+//  3.  Hue is mapped onto a partition of unity built from eight region centres
+//      (0 / 30 / 60 / 120 / 180 / 240 / 285 / 330 degrees).  Between two
+//      adjacent centres the two regions cross-fade with a shaped, C1-continuous
+//      blend; the eight weights always sum to exactly 1, so there are no hard
+//      thresholds, no discontinuities and no banding.  A pixel sitting exactly
+//      on a centre is controlled by that region alone, exactly as in a
+//      photographic HSL panel.
+//  4.  The eight (hue, sat, lum) slider triplets are blended by those weights
+//      into a single effective triplet, which is then applied once.  Applying
+//      one interpolated operator instead of eight stacked operators removes all
+//      ordering artefacts and is what keeps gradients clean.
+//  5.  Operators:
+//        Hue        - rotation in HSV geometry: max/min (hence value and
+//                     saturation) are held, only the hue angle moves.
+//        Saturation - chroma scaling about the pixel's own luma.  This is
+//                     exactly luma preserving by construction and reaches a
+//                     true neutral at -100.
+//        Luminance  - display domain: hue/saturation-preserving tone gain with
+//                     a highlight roll-off (white stays white, black stays
+//                     black).  Log domain: code-value offset = exposure.
+//  6.  Neutral protection, luminance preservation and a soft saturation /
+//      gamut protector.
+//  7.  Decode back to the input encoding and cross-fade by Overall Amount.
+//
+//  All operators are no-ops at their neutral setting, and every operator is
+//  skipped by an explicit test at its neutral value, so the identity case is
+//  bit-exact, not just close.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+//  UI
+// ----------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(uiEncoding, Input Encoding, DCTLUI_COMBO_BOX, 0, {ENC_DISPLAY, ENC_LOG, ENC_LINEAR}, {Display Rec.709 sRGB, Log direct, Scene Linear})
+
+// --- Global -----------------------------------------------------------------
+DEFINE_UI_PARAMS(uiGlobalSat, Global Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiVibrance, Vibrance, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiAmount, Overall Amount, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 1.0)
+
+// --- Red --------------------------------------------------------------------
+DEFINE_UI_PARAMS(uiRedHue, Red Hue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiRedSat, Red Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiRedLum, Red Luminance, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+
+// --- Orange -----------------------------------------------------------------
+DEFINE_UI_PARAMS(uiOrangeHue, Orange Hue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiOrangeSat, Orange Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiOrangeLum, Orange Luminance, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+
+// --- Yellow -----------------------------------------------------------------
+DEFINE_UI_PARAMS(uiYellowHue, Yellow Hue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiYellowSat, Yellow Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiYellowLum, Yellow Luminance, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+
+// --- Green ------------------------------------------------------------------
+DEFINE_UI_PARAMS(uiGreenHue, Green Hue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiGreenSat, Green Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiGreenLum, Green Luminance, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+
+// --- Aqua -------------------------------------------------------------------
+DEFINE_UI_PARAMS(uiAquaHue, Aqua Hue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiAquaSat, Aqua Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiAquaLum, Aqua Luminance, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+
+// --- Blue -------------------------------------------------------------------
+DEFINE_UI_PARAMS(uiBlueHue, Blue Hue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiBlueSat, Blue Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiBlueLum, Blue Luminance, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+
+// --- Purple -----------------------------------------------------------------
+DEFINE_UI_PARAMS(uiPurpleHue, Purple Hue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiPurpleSat, Purple Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiPurpleLum, Purple Luminance, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+
+// --- Magenta ----------------------------------------------------------------
+DEFINE_UI_PARAMS(uiMagentaHue, Magenta Hue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiMagentaSat, Magenta Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiMagentaLum, Magenta Luminance, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+
+// --- Advanced ---------------------------------------------------------------
+DEFINE_UI_PARAMS(uiProtectNeutrals, Protect Neutrals, DCTLUI_SLIDER_FLOAT, 35.0, 0.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiPreserveLum, Preserve Luminance, DCTLUI_SLIDER_FLOAT, 75.0, 0.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiHueFalloff, Hue Falloff, DCTLUI_SLIDER_FLOAT, 50.0, 0.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiSatProtect, Saturation Protection, DCTLUI_SLIDER_FLOAT, 50.0, 0.0, 100.0, 1.0)
+DEFINE_UI_PARAMS(uiPreview, Colour Range Preview, DCTLUI_COMBO_BOX, 0, {PV_OFF, PV_MASK, PV_ISOLATE}, {Off, Region Mask, Isolate Region})
+DEFINE_UI_PARAMS(uiPreviewRegion, Preview Region, DCTLUI_COMBO_BOX, 0, {PR_RED, PR_ORANGE, PR_YELLOW, PR_GREEN, PR_AQUA, PR_BLUE, PR_PURPLE, PR_MAGENTA}, {Red, Orange, Yellow, Green, Aqua, Blue, Purple, Magenta})
+DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
+
+
+// ----------------------------------------------------------------------------
+//  CONSTANTS
+// ----------------------------------------------------------------------------
+
+// Small epsilon used to keep divisions finite.  Chosen well below any
+// meaningful code value but far above float denormals.
+#define LCM_EPS                 1.0e-6f
+
+// Hue rotation delivered at +/-100 on a region's Hue slider, in degrees.
+// 30 degrees moves a colour roughly one photographic hue band, which matches
+// the perceived strength of Lightroom's hue sliders.
+#define LCM_HUE_MAX_DEG         30.0f
+
+// One photographic stop expressed as a DaVinci Intermediate / generic log
+// code-value offset.  This is the DI log slope, i.e. exactly one stop.
+#define LCM_LOG_STOP            0.07329248f
+
+// Luminance slider strength in the display domain, in display-code stops.
+#define LCM_DISPLAY_STOPS       1.5f
+
+// Saturation below which chroma readings become numerically noisy; used to
+// damp the saturation metric for near-black pixels so that sensor noise is not
+// classified as a strongly saturated colour.
+#define LCM_DARK_CHROMA         0.02f
+
+// Vibrance skin attenuation: how much of the vibrance move is withheld from
+// hues near the skin band.
+#define LCM_VIB_SKIN            0.40f
+#define LCM_SKIN_CENTRE_DEG     32.0f
+#define LCM_SKIN_WIDTH_DEG      45.0f
+
+// Rec.709 luma weights, used purely as a lightness metric.
+#define LCM_LUMA_R              0.2126f
+#define LCM_LUMA_G              0.7152f
+#define LCM_LUMA_B              0.0722f
+
+// DaVinci Intermediate transfer-function constants (published by Blackmagic).
+#define LCM_DI_A                0.0075f
+#define LCM_DI_B                7.0f
+#define LCM_DI_C                0.07329248f
+#define LCM_DI_M                10.44426855f
+#define LCM_DI_LIN_CUT          0.00262409f
+#define LCM_DI_LOG_CUT          0.02740668f
+
+
+// ----------------------------------------------------------------------------
+//  SMALL VECTOR / SCALAR HELPERS
+//  Component-wise helpers are used instead of relying on operator overloads for
+//  float3, so the file behaves identically on every DCTL backend.
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float LcmLerp(float a, float b, float t)
+{
+    return a + (b - a) * t;
+}
+
+// Hermite smoothstep on [0,1], clamped.  C1 continuous at both ends.
+__DEVICE__ float LcmSmoothStep01(float x)
+{
+    float t = _saturatef(x);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+__DEVICE__ float3 LcmScale3(float3 v, float s)
+{
+    return make_float3(v.x * s, v.y * s, v.z * s);
+}
+
+__DEVICE__ float3 LcmOffset3(float3 v, float s)
+{
+    return make_float3(v.x + s, v.y + s, v.z + s);
+}
+
+__DEVICE__ float3 LcmLerp3(float3 a, float3 b, float t)
+{
+    return make_float3(LcmLerp(a.x, b.x, t), LcmLerp(a.y, b.y, t), LcmLerp(a.z, b.z, t));
+}
+
+__DEVICE__ float LcmMax3(float3 v)
+{
+    return _fmaxf(v.x, _fmaxf(v.y, v.z));
+}
+
+__DEVICE__ float LcmMin3(float3 v)
+{
+    return _fminf(v.x, _fminf(v.y, v.z));
+}
+
+// Lightness metric.  Rec.709 weights applied in the working encoding.
+__DEVICE__ float LcmLuma(float3 v)
+{
+    return v.x * LCM_LUMA_R + v.y * LCM_LUMA_G + v.z * LCM_LUMA_B;
+}
+
+// Wrap an arbitrary angle into [0,360).
+__DEVICE__ float LcmWrapHue(float h)
+{
+    float w = _fmod(h, 360.0f);
+    if (w < 0.0f) w += 360.0f;
+    return w;
+}
+
+// Shortest signed angular distance from a to b, in [-180,180].
+__DEVICE__ float LcmHueDelta(float a, float b)
+{
+    return _fmod(a - b + 540.0f, 360.0f) - 180.0f;
+}
+
+
+// ----------------------------------------------------------------------------
+//  WORKING SPACE
+//  Only the transfer function is handled; primaries are left untouched.
+// ----------------------------------------------------------------------------
+
+// Scene linear -> DaVinci Intermediate.  The linear toe segment is used for
+// values below the cut, which keeps negative scene values finite and monotonic.
+__DEVICE__ float LcmDiEncode(float x)
+{
+    if (x > LCM_DI_LIN_CUT) return (_log2f(x + LCM_DI_A) + LCM_DI_B) * LCM_DI_C;
+    return x * LCM_DI_M;
+}
+
+__DEVICE__ float LcmDiDecode(float y)
+{
+    if (y > LCM_DI_LOG_CUT)
+    {
+        // The exponent is limited before it is evaluated.  Only absurd working
+        // values reach the limit (a DI code value of 5 is already 2^61 in
+        // linear), but without it a wildly out of range pixel could decode to
+        // infinity and poison everything downstream.
+        return _exp2f(_fminf(y, 5.0f) / LCM_DI_C - LCM_DI_B) - LCM_DI_A;
+    }
+    return y / LCM_DI_M;
+}
+
+__DEVICE__ float3 RGBToWorkingSpace(float3 rgb, int encoding)
+{
+    if (encoding == ENC_LINEAR)
+        return make_float3(LcmDiEncode(rgb.x), LcmDiEncode(rgb.y), LcmDiEncode(rgb.z));
+    // Display and log inputs are already perceptually encoded and are processed
+    // in place.
+    return rgb;
+}
+
+__DEVICE__ float3 WorkingSpaceToRGB(float3 rgb, int encoding)
+{
+    if (encoding == ENC_LINEAR)
+        return make_float3(LcmDiDecode(rgb.x), LcmDiDecode(rgb.y), LcmDiDecode(rgb.z));
+    return rgb;
+}
+
+
+// ----------------------------------------------------------------------------
+//  HUE GEOMETRY
+// ----------------------------------------------------------------------------
+
+// Standard HSV hue angle in degrees.  Returns 0 for neutral pixels, where hue
+// is undefined; that is safe because every operator that consumes hue is a
+// no-op at zero chroma.
+__DEVICE__ float RGBToHue(float3 c, float mx, float chroma)
+{
+    if (chroma <= LCM_EPS) return 0.0f;
+
+    float h;
+    if (mx == c.x)      h = (c.y - c.z) / chroma;
+    else if (mx == c.y) h = 2.0f + (c.z - c.x) / chroma;
+    else                h = 4.0f + (c.x - c.y) / chroma;
+
+    return LcmWrapHue(h * 60.0f);
+}
+
+// HSV saturation.  Scale invariant, so it reads the same at any exposure, and
+// it is exactly 1 when the smallest channel sits on zero: values above 1 mean
+// the pixel has gone out of gamut.  This is the metric the gamut protector
+// works in, so it is deliberately undamped.
+__DEVICE__ float LcmGamutSaturation(float mx, float chroma)
+{
+    if (mx <= LCM_EPS) return 0.0f;
+    return chroma / mx;
+}
+
+// The same reading damped for very dark pixels, where chroma / max is
+// numerically unstable and would otherwise report sensor noise as a strongly
+// saturated colour.  This is the metric the perceptual controls (neutral
+// protection and vibrance) work in.
+__DEVICE__ float LcmPerceptualSaturation(float mx, float chroma)
+{
+    if (mx <= LCM_EPS) return 0.0f;
+    return _fminf(chroma / mx, chroma / LCM_DARK_CHROMA);
+}
+
+// One channel of the branchless HSV reconstruction.  n = 5 gives red, 3 green,
+// 1 blue.  Rebuilding with the original max and chroma keeps HSV value and
+// saturation exactly, so only the hue angle moves.
+__DEVICE__ float LcmHueChannel(float n, float hueDeg, float mx, float chroma)
+{
+    float k = _fmod(n + hueDeg * (1.0f / 60.0f), 6.0f);
+    return mx - chroma * _clampf(_fminf(k, 4.0f - k), 0.0f, 1.0f);
+}
+
+__DEVICE__ float3 ApplyHue(float hueDeg, float mx, float chroma)
+{
+    return make_float3(LcmHueChannel(5.0f, hueDeg, mx, chroma),
+                       LcmHueChannel(3.0f, hueDeg, mx, chroma),
+                       LcmHueChannel(1.0f, hueDeg, mx, chroma));
+}
+
+
+// ----------------------------------------------------------------------------
+//  REGION WEIGHTING
+//
+//  The eight region centres are
+//      Red 0   Orange 30   Yellow 60   Green 120
+//      Aqua 180  Blue 240  Purple 285  Magenta 330
+//  and the hue circle is split into the eight arcs between them.  Inside an arc
+//  the two bounding regions cross-fade, everything else is zero, and the eight
+//  weights therefore sum to exactly 1 for every possible hue.  This partition
+//  of unity is what removes hue banding: there is no threshold anywhere, only a
+//  continuous cross-fade, and a colour sitting on a centre is owned by that
+//  region alone.
+// ----------------------------------------------------------------------------
+
+// Shaped cross-fade.  falloff 0 gives a tightly targeted selection, falloff 1 a
+// broad linear cross-fade.  b(0)=0, b(1)=1, b(0.5)=0.5 for every shape, and the
+// derivative is continuous, so widening or narrowing the selection can never
+// introduce a hard edge.
+__DEVICE__ float LcmBlendShape(float t, float falloff)
+{
+    float p  = 1.0f + (1.0f - _saturatef(falloff)) * 4.0f;
+    float tc = _saturatef(t);
+    float a  = _powf(tc, p);
+    float b  = _powf(1.0f - tc, p);
+    return a / _fmaxf(a + b, LCM_EPS);
+}
+
+// Returns (segment index, next segment index, cross-fade position) packed into
+// a float3.  A packed return is used instead of a struct or output pointers so
+// that the file compiles unchanged on the CUDA, OpenCL and Metal backends.
+__DEVICE__ float3 LcmFindHueBand(float hueDeg, float falloff)
+{
+    int seg;
+    float lo, hi;
+
+    if      (hueDeg <  30.0f) { seg = 0; lo =   0.0f; hi =  30.0f; }
+    else if (hueDeg <  60.0f) { seg = 1; lo =  30.0f; hi =  60.0f; }
+    else if (hueDeg < 120.0f) { seg = 2; lo =  60.0f; hi = 120.0f; }
+    else if (hueDeg < 180.0f) { seg = 3; lo = 120.0f; hi = 180.0f; }
+    else if (hueDeg < 240.0f) { seg = 4; lo = 180.0f; hi = 240.0f; }
+    else if (hueDeg < 285.0f) { seg = 5; lo = 240.0f; hi = 285.0f; }
+    else if (hueDeg < 330.0f) { seg = 6; lo = 285.0f; hi = 330.0f; }
+    else                      { seg = 7; lo = 330.0f; hi = 360.0f; }
+
+    float t = (hueDeg - lo) / (hi - lo);
+    return make_float3((float)seg, (float)((seg + 1) & 7), LcmBlendShape(t, falloff));
+}
+
+// Weight of one region given the active arc.  Exactly two regions are non-zero.
+__DEVICE__ float HueWeight(int region, int seg, int segNext, float blend)
+{
+    float w = 0.0f;
+    if (region == seg)     w += 1.0f - blend;
+    if (region == segNext) w += blend;
+    return w;
+}
+
+
+// ----------------------------------------------------------------------------
+//  OPERATORS
+// ----------------------------------------------------------------------------
+
+// Chroma scaling about the pixel's own luma.  Because the luma of the residual
+// (rgb - luma) is exactly zero, this operation preserves luma exactly for any
+// gain, reaches a true neutral at gain 0 and keeps the hue angle untouched
+// (all channel differences scale by the same factor).
+__DEVICE__ float3 LcmScaleChroma(float3 c, float gain)
+{
+    if (gain == 1.0f) return c;
+    float y = LcmLuma(c);
+    return make_float3(y + (c.x - y) * gain,
+                       y + (c.y - y) * gain,
+                       y + (c.z - y) * gain);
+}
+
+// -100 reaches a true neutral, +100 doubles chroma.
+__DEVICE__ float ApplySaturation(float amount)
+{
+    return 1.0f + amount;
+}
+
+// Fades the per-region controls out as a pixel approaches neutral.  The
+// threshold widens with the control, and the mask is always zero at zero
+// saturation, so exact neutrals are never touched at any setting.
+__DEVICE__ float ProtectNeutrals(float sat, float protect)
+{
+    float threshold = 0.05f + 0.45f * _saturatef(protect);
+    return LcmSmoothStep01(sat / threshold);
+}
+
+// Proximity to the skin hue band, 1 on the band centre and 0 beyond its width.
+// This is not a skin detector: it is a smooth hue-only weighting used solely to
+// hold vibrance back over skin, which is the defining behaviour of the control.
+__DEVICE__ float LcmSkinProximity(float hueDeg)
+{
+    float d = _fabs(LcmHueDelta(hueDeg, LCM_SKIN_CENTRE_DEG));
+    return 1.0f - LcmSmoothStep01(d / LCM_SKIN_WIDTH_DEG);
+}
+
+// Global saturation: a plain chroma gain, independent of hue.
+__DEVICE__ float ApplyGlobalSaturation(float amount)
+{
+    return 1.0f + amount;
+}
+
+// Vibrance: a saturation-aware chroma gain.  Weak colours are moved much more
+// than colours that are already saturated, and the skin band is held back.
+// Negative vibrance keeps more of the strongest colours than a plain saturation
+// cut would, which is what separates the two controls.
+__DEVICE__ float ApplyVibrance(float amount, float sat, float hueDeg)
+{
+    if (amount == 0.0f) return 1.0f;
+    float s    = _saturatef(sat);
+    float skin = 1.0f - LCM_VIB_SKIN * LcmSkinProximity(hueDeg);
+    float w    = (amount > 0.0f) ? _powf(1.0f - s, 1.5f) : (0.35f + 0.65f * (1.0f - s));
+    return 1.0f + amount * w * skin;
+}
+
+// Restores the luma a hue rotation moved, without undoing the Luminance
+// sliders, which are applied afterwards.  In a log domain the correct exposure
+// analogue is an offset, which also keeps chroma intact; in a display domain it
+// is a gain, which keeps HSV saturation intact and blacks clean.
+__DEVICE__ float3 PreserveLuminance(float3 c, float lumaBefore, float strength, int encoding)
+{
+    if (strength <= 0.0f) return c;
+    float lumaAfter = LcmLuma(c);
+
+    if (encoding != ENC_DISPLAY) return LcmOffset3(c, (lumaBefore - lumaAfter) * strength);
+
+    if (lumaBefore <= LCM_EPS || lumaAfter <= LCM_EPS) return c;
+    float s = _clampf(lumaBefore / lumaAfter, 0.25f, 4.0f);
+    return LcmScale3(c, 1.0f + (s - 1.0f) * strength);
+}
+
+// Region luminance.
+//
+//   Log domain     : a code-value offset, which is what an exposure change is
+//                    in any log encoding.  Hue and chroma are untouched because
+//                    all three channels move together.
+//   Linear domain  : the working value is decoded, scaled and re-encoded, so
+//                    the move is exactly an exposure change in the scene-linear
+//                    values the node was handed.
+//   Display domain : the pixel's value is pushed along a Moebius tone response
+//                    and the whole triplet is rescaled by the same factor, so
+//                    hue and HSV saturation are preserved exactly.  The curve
+//                    fixes both 0 and 1, is its own inverse under gain -> 1/gain
+//                    and has a bounded slope everywhere, so black stays black,
+//                    white stays white and no highlight can be blown out of the
+//                    display range.  Above display white the curve has a pole,
+//                    so it is continued there by a plain gain: values that are
+//                    already beyond white simply scale, which is monotonic,
+//                    pole free and keeps the control's direction meaningful.
+__DEVICE__ float3 ApplyLuminance(float3 c, float amount, int encoding)
+{
+    if (amount == 0.0f) return c;
+
+    if (encoding == ENC_LOG) return LcmOffset3(c, amount * LCM_LOG_STOP);
+
+    if (encoding == ENC_LINEAR)
+    {
+        float gain = _exp2f(amount);                 // +/- one stop at +/-100
+        return make_float3(LcmDiEncode(LcmDiDecode(c.x) * gain),
+                           LcmDiEncode(LcmDiDecode(c.y) * gain),
+                           LcmDiEncode(LcmDiDecode(c.z) * gain));
+    }
+
+    float mx = LcmMax3(c);
+    if (mx <= LCM_EPS) return c;                     // black stays black
+
+    float gain = _exp2f(amount * LCM_DISPLAY_STOPS);
+    float mxNew;
+    if (mx < 1.0f) mxNew = mx * gain / (1.0f + mx * (gain - 1.0f));
+    else           mxNew = 1.0f + (mx - 1.0f) * gain;
+
+    return LcmScale3(c, mxNew / mx);
+}
+
+
+// Soft saturation / gamut protection.
+//
+// Only increases in saturation are limited: a pixel whose saturation the mixer
+// did not raise is returned untouched, so the control can never desaturate
+// material the user did not ask to change.  Above a soft knee the excess is
+// compressed exponentially towards a ceiling which the result approaches but
+// never reaches, so at Saturation Protection = 100 an in-gamut pixel can never
+// be pushed past saturation 1, which is exactly the point where a channel would
+// go negative.
+__DEVICE__ float3 ProtectSaturation(float3 c, float satBefore, float protect)
+{
+    float mx     = LcmMax3(c);
+    float mn     = LcmMin3(c);
+    float chroma = mx - mn;
+    float satNow = LcmGamutSaturation(mx, chroma);
+
+    if (satNow <= satBefore) return c;           // untouched or desaturated
+
+    // protect 0 -> ceiling 2.0 (permissive), protect 1 -> ceiling 1.0 (in gamut)
+    float ceiling = _fmaxf(satBefore, 2.0f - _saturatef(protect));
+    float knee    = _fmaxf(satBefore, ceiling * 0.65f);
+    if (satNow <= knee) return c;
+
+    float range  = _fmaxf(ceiling - knee, LCM_EPS);
+    float target = knee + range * (1.0f - _expf(-(satNow - knee) / range));
+
+    // Chroma is scaled about luma, which keeps the pixel's brightness and hue.
+    // The gain is solved for rather than approximated by target / satNow: an
+    // exact solve is what makes the compressor land on 1 at the knee, and
+    // therefore what keeps the whole operator continuous.
+    //   sat(gain) = gain * chroma / (luma + gain * (max - luma)) = target
+    float y     = LcmLuma(c);
+    float denom = chroma - target * (mx - y);
+    float gain  = (y > LCM_EPS && denom > LCM_EPS) ? (target * y / denom)
+                                                  : (target / _fmaxf(satNow, LCM_EPS));
+
+    return LcmScaleChroma(c, _clampf(gain, 0.0f, 1.0f));
+}
+
+
+// ----------------------------------------------------------------------------
+//  PIXEL PIPELINE
+//  The eight slider triplets have already been blended into one effective
+//  triplet by the caller, so this function is independent of the UI layout.
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 ApplyColorMixer(float3 w, float hueDeg,
+                                  float dHue, float dSat, float dLum,
+                                  float globalSat, float vibrance,
+                                  float protectNeutrals, float preserveLum,
+                                  float satProtect, int encoding)
+{
+    float3 c = w;
+
+    float mx     = LcmMax3(c);
+    float mn     = LcmMin3(c);
+    float chroma = mx - mn;
+    float sat    = LcmPerceptualSaturation(mx, chroma);
+    float satIn  = LcmGamutSaturation(mx, chroma);   // reference for gamut protection
+
+    // --- global saturation and vibrance, folded into one chroma gain --------
+    float kGlobal = ApplyGlobalSaturation(globalSat) * ApplyVibrance(vibrance, sat, hueDeg);
+    if (kGlobal != 1.0f)
+    {
+        c = LcmScaleChroma(c, kGlobal);
+        mx = LcmMax3(c);
+        mn = LcmMin3(c);
+        chroma = mx - mn;
+    }
+
+    // --- neutral protection scales all three per-region moves ---------------
+    float mask    = ProtectNeutrals(sat, protectNeutrals);
+    float hueAmt  = dHue * mask;
+    float satAmt  = dSat * mask;
+    float lumAmt  = dLum * mask;
+
+    // --- 1. hue -------------------------------------------------------------
+    if (hueAmt != 0.0f)
+    {
+        float lumaBefore = LcmLuma(c);
+        c = ApplyHue(LcmWrapHue(hueDeg + hueAmt * LCM_HUE_MAX_DEG), mx, chroma);
+        c = PreserveLuminance(c, lumaBefore, preserveLum, encoding);
+    }
+
+    // --- 2. saturation ------------------------------------------------------
+    if (satAmt != 0.0f) c = LcmScaleChroma(c, ApplySaturation(satAmt));
+
+    // --- 3. luminance -------------------------------------------------------
+    if (lumAmt != 0.0f) c = ApplyLuminance(c, lumAmt, encoding);
+
+    // --- 4. gamut protection ------------------------------------------------
+    return ProtectSaturation(c, satIn, satProtect);
+}
+
+
+// ----------------------------------------------------------------------------
+//  COLOUR RANGE PREVIEW (diagnostic)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 ApplyPreview(float3 rgb, float weight, int mode, int encoding)
+{
+    if (mode == PV_MASK) return make_float3(weight, weight, weight);
+
+    // Isolate: the selected region keeps its colour, everything else falls back
+    // to a dimmed monochrome rendering.
+    float g = LcmLuma(rgb);
+    float3 dull = make_float3(g, g, g);
+    if (encoding == ENC_DISPLAY) dull = LcmScale3(dull, 0.5f);
+    return LcmLerp3(dull, rgb, _saturatef(weight));
+}
+
+
+// ----------------------------------------------------------------------------
+//  ENTRY POINT
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                            float p_R, float p_G, float p_B)
+{
+    float3 rgbIn = make_float3(p_R, p_G, p_B);
+
+    if (uiBypass) return rgbIn;
+
+    const float k = 0.01f;                    // slider units -> normalised units
+    float amount  = _saturatef(uiAmount * k);
+
+    // Sum of the magnitudes of every colour control.  When it is zero there is
+    // nothing to do and the input is returned untouched, which makes the
+    // identity case bit exact rather than merely close.
+    float activity =
+        _fabs(uiGlobalSat)   + _fabs(uiVibrance)     +
+        _fabs(uiRedHue)      + _fabs(uiRedSat)       + _fabs(uiRedLum)      +
+        _fabs(uiOrangeHue)   + _fabs(uiOrangeSat)    + _fabs(uiOrangeLum)   +
+        _fabs(uiYellowHue)   + _fabs(uiYellowSat)    + _fabs(uiYellowLum)   +
+        _fabs(uiGreenHue)    + _fabs(uiGreenSat)     + _fabs(uiGreenLum)    +
+        _fabs(uiAquaHue)     + _fabs(uiAquaSat)      + _fabs(uiAquaLum)     +
+        _fabs(uiBlueHue)     + _fabs(uiBlueSat)      + _fabs(uiBlueLum)     +
+        _fabs(uiPurpleHue)   + _fabs(uiPurpleSat)    + _fabs(uiPurpleLum)   +
+        _fabs(uiMagentaHue)  + _fabs(uiMagentaSat)   + _fabs(uiMagentaLum);
+
+    int previewOn = (uiPreview != PV_OFF) ? 1 : 0;
+    if (!previewOn && (amount <= 0.0f || activity <= 0.0f)) return rgbIn;
+
+    float3 w = RGBToWorkingSpace(rgbIn, uiEncoding);
+
+    // --- measure ------------------------------------------------------------
+    float mx     = LcmMax3(w);
+    float mn     = LcmMin3(w);
+    float chroma = mx - mn;
+    float hueDeg = RGBToHue(w, mx, chroma);
+
+    // --- region weights (a partition of unity over the hue circle) ----------
+    float3 band  = LcmFindHueBand(hueDeg, uiHueFalloff * k);
+    int seg      = (int)band.x;
+    int segNext  = (int)band.y;
+    float blend  = band.z;
+
+    float wRed     = HueWeight(0, seg, segNext, blend);
+    float wOrange  = HueWeight(1, seg, segNext, blend);
+    float wYellow  = HueWeight(2, seg, segNext, blend);
+    float wGreen   = HueWeight(3, seg, segNext, blend);
+    float wAqua    = HueWeight(4, seg, segNext, blend);
+    float wBlue    = HueWeight(5, seg, segNext, blend);
+    float wPurple  = HueWeight(6, seg, segNext, blend);
+    float wMagenta = HueWeight(7, seg, segNext, blend);
+
+    // --- blend the eight slider triplets into one effective triplet ---------
+    float dHue = (wRed     * uiRedHue     + wOrange * uiOrangeHue +
+                  wYellow  * uiYellowHue  + wGreen  * uiGreenHue  +
+                  wAqua    * uiAquaHue    + wBlue   * uiBlueHue   +
+                  wPurple  * uiPurpleHue  + wMagenta * uiMagentaHue) * k;
+
+    float dSat = (wRed     * uiRedSat     + wOrange * uiOrangeSat +
+                  wYellow  * uiYellowSat  + wGreen  * uiGreenSat  +
+                  wAqua    * uiAquaSat    + wBlue   * uiBlueSat   +
+                  wPurple  * uiPurpleSat  + wMagenta * uiMagentaSat) * k;
+
+    float dLum = (wRed     * uiRedLum     + wOrange * uiOrangeLum +
+                  wYellow  * uiYellowLum  + wGreen  * uiGreenLum  +
+                  wAqua    * uiAquaLum    + wBlue   * uiBlueLum   +
+                  wPurple  * uiPurpleLum  + wMagenta * uiMagentaLum) * k;
+
+    float3 outW = ApplyColorMixer(w, hueDeg, dHue, dSat, dLum,
+                                  uiGlobalSat * k, uiVibrance * k,
+                                  uiProtectNeutrals * k, uiPreserveLum * k,
+                                  uiSatProtect * k, uiEncoding);
+
+    float3 outRGB = WorkingSpaceToRGB(outW, uiEncoding);
+
+    if (amount < 1.0f) outRGB = LcmLerp3(rgbIn, outRGB, amount);
+
+    if (previewOn)
+    {
+        float wSel = HueWeight((int)uiPreviewRegion, seg, segNext, blend);
+        outRGB = ApplyPreview(outRGB, wSel, uiPreview, uiEncoding);
+    }
+
+    return outRGB;
+}

@@ -1,0 +1,3 @@
+tests/dctl_harness
+*.o
+__pycache__/
