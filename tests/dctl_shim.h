@@ -103,7 +103,7 @@ static inline float _atan2f(float a, float b)           { return atan2f(a, b); }
 //  parses the DCTL's DCTLUI_COMBO_BOX declarations and fails if the order or
 //  the names here drift.
 // ---------------------------------------------------------------------------
-enum { ENC_DISPLAY = 0, ENC_LOG = 1, ENC_LINEAR = 2 };
+enum { ENC_DISPLAY = 0, ENC_LOG = 1, ENC_LINEAR = 2, ENC_DWG = 3 };
 enum { PV_OFF = 0, PV_MASK = 1, PV_ISOLATE = 2 };
 enum { PR_RED = 0, PR_ORANGE = 1, PR_YELLOW = 2, PR_GREEN = 3,
        PR_AQUA = 4, PR_BLUE = 5, PR_PURPLE = 6, PR_MAGENTA = 7 };

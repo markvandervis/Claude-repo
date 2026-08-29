@@ -39,8 +39,22 @@ LUMA_R, LUMA_G, LUMA_B = 0.2126, 0.7152, 0.0722
 DI_A, DI_B, DI_C, DI_M = 0.0075, 7.0, 0.07329248, 10.44426855
 DI_LIN_CUT, DI_LOG_CUT = 0.00262409, 0.02740668
 
-ENC_DISPLAY, ENC_LOG, ENC_LINEAR = 0, 1, 2
+SRGB_CUT, SRGB_SLOPE, SRGB_A, SRGB_B, SRGB_GAMMA = 0.0031308, 12.92, 1.055, 0.055, 1.0 / 2.4
+
+#: DaVinci Wide Gamut -> Rec.709, linear.  The published Blackmagic
+#: DaVinci WG -> XYZ matrix composed with the standard XYZ -> Rec.709 matrix,
+#: each row normalised to sum to exactly 1 so a neutral maps to a neutral.
+DWG_TO_REC709 = (
+    (1.89871504, -0.79180471, -0.10691033),
+    (-0.16894835, 1.48839859, -0.31945024),
+    (-0.12152602, -0.31546761, 1.43699363),
+)
+
+ENC_DISPLAY, ENC_LOG, ENC_LINEAR, ENC_DWG = 0, 1, 2, 3
 PV_OFF, PV_MASK, PV_ISOLATE = 0, 1, 2
+
+ENCODING_NAMES = {ENC_DISPLAY: "Display Rec.709 sRGB", ENC_LOG: "Log direct",
+                  ENC_LINEAR: "Scene Linear", ENC_DWG: "DaVinci WG Intermediate"}
 
 #: Region centres in degrees, in the order the UI presents them.
 REGION_NAMES = ("red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta")
@@ -59,7 +73,7 @@ _ARCS = ((0.0, 30.0), (30.0, 60.0), (60.0, 120.0), (120.0, 180.0),
 class MixerParams:
     """All UI controls, in slider units (the same numbers Resolve shows)."""
 
-    encoding: int = ENC_DISPLAY
+    encoding: int = ENC_DWG
 
     global_saturation: float = 0.0      # -100 .. +100
     vibrance: float = 0.0               # -100 .. +100
@@ -175,6 +189,20 @@ def di_decode(y):
     return y / DI_M
 
 
+def srgb_encode(x):
+    """Rec.709 / sRGB OETF, with out-of-gamut values held at zero.
+
+    The linear toe bounds the slope at zero.  A pure power function does not,
+    which makes the hue of a fully saturated colour hypersensitive - over a
+    saturated hue sweep the toe cuts the worst hue step by a factor of twelve.
+    """
+    if x <= 0.0:
+        return 0.0
+    if x <= SRGB_CUT:
+        return x * SRGB_SLOPE
+    return SRGB_A * x ** SRGB_GAMMA - SRGB_B
+
+
 def rgb_to_working_space(rgb, encoding):
     if encoding == ENC_LINEAR:
         return (di_encode(rgb[0]), di_encode(rgb[1]), di_encode(rgb[2]))
@@ -237,6 +265,25 @@ def apply_hue(hue_deg, mx, chroma):
 # --------------------------------------------------------------------------
 # Region weighting
 # --------------------------------------------------------------------------
+def selection_hue(w, hue_working, encoding):
+    """The hue angle used to choose the regions, which is not always the working one.
+
+    In DaVinci WG mode the pixel is carried into the Rec.709 display encoding
+    first - decode out of DaVinci Intermediate, matrix into Rec.709 primaries,
+    re-encode with the sRGB curve - because that is the space the grade is
+    viewed in downstream of CST OUT, and the space in which the eight region
+    names mean what a photographer expects.  Only the selection is measured
+    there; every operator still runs on the untouched DaVinci WG values.
+    """
+    if encoding != ENC_DWG:
+        return hue_working
+    lin = [di_decode(v) for v in w]
+    rec709 = tuple(srgb_encode(sum(row[i] * lin[i] for i in range(3)))
+                   for row in DWG_TO_REC709)
+    mx, mn = max(rec709), min(rec709)
+    return rgb_to_hue(rec709, mx, mx - mn)
+
+
 def blend_shape(t, falloff):
     """Shaped cross-fade: 0 at t=0, 1 at t=1, 0.5 at t=0.5 for any falloff."""
     p = 1.0 + (1.0 - saturate(falloff)) * 4.0
@@ -327,7 +374,7 @@ def preserve_luminance(rgb, luma_before, strength, encoding):
 def apply_luminance(rgb, amount, encoding):
     """Region luminance.
 
-    Log:     a code-value offset, i.e. an exposure change.
+    Log/DWG: a code-value offset, i.e. an exposure change.
     Linear:  decode, scale, re-encode - an exact exposure change.
     Display: a Moebius tone response that fixes both 0 and 1, applied to the
              pixel's value and passed on as a common scale factor so hue and
@@ -338,11 +385,12 @@ def apply_luminance(rgb, amount, encoding):
     """
     if amount == 0.0:
         return rgb
-    if encoding == ENC_LOG:
-        return offset3(rgb, amount * LOG_STOP)
     if encoding == ENC_LINEAR:
         gain = 2.0 ** amount
         return tuple(di_encode(di_decode(v) * gain) for v in rgb)
+    if encoding != ENC_DISPLAY:
+        # every remaining non-display mode has a log working domain
+        return offset3(rgb, amount * LOG_STOP)
 
     mx = max(rgb)
     if mx <= EPS:
@@ -387,14 +435,16 @@ def protect_saturation(rgb, sat_before, protect):
 # --------------------------------------------------------------------------
 # Pixel pipeline
 # --------------------------------------------------------------------------
-def apply_color_mixer_core(w, hue_deg, d_hue, d_sat, d_lum, global_sat, vibrance,
+def apply_color_mixer_core(w, hue_working, hue_select, d_hue, d_sat, d_lum,
+                           global_sat, vibrance,
                            protect_neutrals_amt, preserve_lum, sat_protect, encoding):
     c = w
     mx, mn = max(c), min(c)
     sat = perceptual_saturation(mx, mx - mn)
     sat_in = gamut_saturation(mx, mx - mn)
 
-    k_global = apply_global_saturation(global_sat) * apply_vibrance(vibrance, sat, hue_deg)
+    # vibrance's skin band is perceptual, so it follows the selection hue
+    k_global = apply_global_saturation(global_sat) * apply_vibrance(vibrance, sat, hue_select)
     if k_global != 1.0:
         c = scale_chroma(c, k_global)
         mx, mn = max(c), min(c)
@@ -404,7 +454,9 @@ def apply_color_mixer_core(w, hue_deg, d_hue, d_sat, d_lum, global_sat, vibrance
 
     if hue_amt != 0.0:
         luma_before = luma(c)
-        c = apply_hue(wrap_hue(hue_deg + hue_amt * HUE_MAX_DEG), mx, mx - mn)
+        # the rotation happens in the working encoding, so the working angle
+        # is what gets rotated
+        c = apply_hue(wrap_hue(hue_working + hue_amt * HUE_MAX_DEG), mx, mx - mn)
         c = preserve_luminance(c, luma_before, preserve_lum, encoding)
 
     if sat_amt != 0.0:
@@ -447,9 +499,10 @@ def process_pixel(rgb, p: MixerParams):
     w = rgb_to_working_space(rgb, p.encoding)
 
     mx, mn = max(w), min(w)
-    hue_deg = rgb_to_hue(w, mx, mx - mn)
+    hue_work = rgb_to_hue(w, mx, mx - mn)
+    hue_sel = selection_hue(w, hue_work, p.encoding)
 
-    seg, seg_next, blend = find_hue_band(hue_deg, p.hue_falloff * k)
+    seg, seg_next, blend = find_hue_band(hue_sel, p.hue_falloff * k)
     weights = [hue_weight(i, seg, seg_next, blend) for i in range(8)]
 
     d_hue = sum(weights[i] * p.hue[i] for i in range(8)) * k
@@ -457,7 +510,7 @@ def process_pixel(rgb, p: MixerParams):
     d_lum = sum(weights[i] * p.luminance[i] for i in range(8)) * k
 
     out_w = apply_color_mixer_core(
-        w, hue_deg, d_hue, d_sat, d_lum,
+        w, hue_work, hue_sel, d_hue, d_sat, d_lum,
         p.global_saturation * k, p.vibrance * k,
         p.protect_neutrals * k, p.preserve_luminance * k,
         p.saturation_protection * k, p.encoding)

@@ -5,6 +5,12 @@ Studio: independent **Hue / Saturation / Luminance** for eight overlapping
 colour regions, plus global Saturation, Vibrance and a set of protection
 controls — 24 per-colour controls and 11 supporting ones in total.
 
+It defaults to sitting inside a colour-managed Resolve node tree — fed
+**DaVinci Wide Gamut / DaVinci Intermediate** by a CST at the head of the tree —
+and in that mode it measures hue the way you will see it after CST OUT, so the
+eight region names mean what a photographer expects. See
+[Placing it in the node tree](#placing-it-in-the-node-tree).
+
 It is an **independent implementation inspired by the behaviour** of Lightroom's
 Colour Mixer / HSL panel. It is not Adobe's algorithm, no Adobe code or binary
 was used or inspected, and it is not numerically equivalent to Lightroom. See
@@ -19,6 +25,7 @@ was used or inspected, and it is not numerically equivalent to Lightroom. See
 - [What it does](#what-it-does)
 - [How it compares to Lightroom](#how-it-compares-to-lightroom)
 - [Installation](#installation)
+- [Placing it in the node tree](#placing-it-in-the-node-tree)
 - [Controls](#controls)
 - [Colour-space assumptions](#colour-space-assumptions)
 - [Example workflows](#example-workflows)
@@ -116,8 +123,10 @@ DCTL requires **DaVinci Resolve Studio**. The free edition cannot load DCTLs.
    **Effects → ResolveFX Color → DCTL**, drag it onto a node, then pick
    *Lightroom Color Mixer* from the **DCTL List** dropdown in the Inspector.
 
-3. Set **Input Encoding** to match what the node is being fed. This matters —
-   see [Colour-space assumptions](#colour-space-assumptions).
+3. Set **Input Encoding** to match what the node is being fed. It defaults to
+   *DaVinci WG Intermediate*, which is correct for a colour-managed tree with a
+   CST at the head. This matters — see
+   [Colour-space assumptions](#colour-space-assumptions).
 
 **Reloading after an edit.** Resolve caches the DCTL list and the compiled
 kernel. After changing the file, either
@@ -129,12 +138,47 @@ black.
 
 ---
 
+## Placing it in the node tree
+
+The mixer is built for the standard colour-managed layout: convert once at the
+head, grade in a wide working space, convert once at the tail.
+
+```
+   01        02       03         04        05         06..09        11
+ CST IN  →   WB  →  EXPOSURE → CONTRAST → DCTL  →  parallel... →  CST OUT
+S-Log3 /                                  Colour                   DWG / DI
+F-Log  →                                  Mixer                    → Rec.709
+DWG / DI
+```
+
+With **Input Encoding = DaVinci WG Intermediate** (the default) this placement is
+exactly what the DCTL expects:
+
+- Camera log is normalised to one working space by CST IN, so the mixer behaves
+  identically on S-Log3, F-Log, LogC or anything else you throw at the tree —
+  the DCTL never sees the camera's curve.
+- Sitting after WB, Exposure and Contrast means it selects colours from an image
+  that is already balanced, which is what makes the region boundaries land where
+  you expect.
+- Nothing is clipped. Every operator runs on the DaVinci Wide Gamut values, so
+  colours outside Rec.709 pass through the node and are still there for CST OUT
+  to tone-map.
+- Region selection is measured *as if through CST OUT*, so what you pick with
+  the Green slider is what looks green on the monitor.
+
+Put it before the parallel nodes rather than inside them: the mixer is a global
+colour-relationship tool, and the parallel branches are the right place for the
+keys and windows that come after it.
+
+---
+
 ## Controls
 
 ### Input Encoding
 
 What the node is being handed. Changes how Luminance works and where hue is
-measured. See [Colour-space assumptions](#colour-space-assumptions).
+measured. Defaults to **DaVinci WG Intermediate**. See
+[Colour-space assumptions](#colour-space-assumptions).
 
 ### Global
 
@@ -183,24 +227,78 @@ that ignores this misbehaves on log and linear footage — so this one asks.
 
 | Setting | Expects | How it works |
 |---|---|---|
-| **Display Rec.709 sRGB** *(default)* | display-referred, perceptually encoded, nominal 0–1 (Rec.709, sRGB, Rec.1886, a P3 display space, or the output of a CST / display LUT) | The mixer runs directly on the values. Luminance uses a tone response that fixes both black and white, so it cannot blow a highlight out of the display range. |
+| **DaVinci WG Intermediate** *(default)* | DaVinci Wide Gamut / DaVinci Intermediate — the output of a CST at the head of a colour-managed tree | Processing is identical to *Log direct*: the mixer runs on the DaVinci WG values and nothing is clipped to a smaller gamut. The difference is that the hue angle used to **choose** the regions is measured after carrying the pixel into Rec.709 — see below. |
+| **Display Rec.709 sRGB** | display-referred, perceptually encoded, nominal 0–1 (Rec.709, sRGB, Rec.1886, a P3 display space, or the output of a CST / display LUT) | The mixer runs directly on the values. Luminance uses a tone response that fixes both black and white, so it cannot blow a highlight out of the display range. |
 | **Log direct** | any log encoding — DaVinci Intermediate, ACEScct, ARRI LogC, Sony S-Log3, Panasonic V-Log, RED Log3G10 … | Log curves are already roughly perceptually uniform, so the mixer runs directly on the code values. Luminance is applied as a code-value offset of 0.0733 per 100, which is one stop in a DI/LogC-slope curve and close to it in the others. |
 | **Scene Linear** | scene-linear RGB | Encoded to DaVinci Intermediate for processing and decoded back afterwards, so hue selection stays perceptual. Luminance is decoded, scaled and re-encoded, making it an exact ±1 stop exposure change. |
 
+### Why DaVinci Wide Gamut needs its own mode
+
+DaVinci Wide Gamut's primaries are far wider than Rec.709, and a hue angle
+measured in them is not the hue angle you see on the monitor. Measured against
+photographic patches, reading the DWG values directly puts them here:
+
+| | Rec.709 hue | measured in DWG | drift |
+|---|---|---|---|
+| skin (light / mid / deep) | 23 / 20 / 17° | 25 / 22 / 19° | +2° |
+| sky (clear / deep) | 214 / 220° | 215 / 219° | ≈0° |
+| orange, aqua, magenta, yellow | — | — | 1–2° |
+| **foliage (sunlit / mid)** | 88 / 102° | 79 / 89° | **−9 / −13°** |
+| **purple** | 281° | 270° | **−11°** |
+| **pure green** | 120° | 99° | **−21°** |
+
+Warm tones and skies barely move, but greens and purples land more than a whole
+region early. A green leaf that is 92% *Green* by its appearance reads as 55%
+*Yellow* / 45% *Green* in raw DWG — you reach for the Green slider and get half
+an effect plus an unwanted yellow one.
+
+The **DaVinci WG Intermediate** mode fixes this by measuring the *selection* hue
+in the space you are actually looking at:
+
+```
+DaVinci Intermediate  →  DWG linear  →  matrix  →  Rec.709 linear  →  sRGB curve  →  hue angle
+```
+
+The matrix is Blackmagic's published DaVinci WG → XYZ composed with the standard
+XYZ → Rec.709, each row normalised to sum to exactly 1 so a neutral stays a
+neutral. The re-encode uses the sRGB transfer function including its linear toe:
+that toe is not cosmetic, because a pure power function has an unbounded slope at
+zero, which makes the measured hue of a fully saturated colour hypersensitive —
+the toe cuts the worst hue step over a saturated sweep by a factor of twelve.
+
+Across the patch set this recovers the Rec.709 hue to within **0.05°**, and the
+region weights the DCTL actually computes match the ones its Rec.709 appearance
+deserves to within **0.0012** — against **0.47** for reading DWG raw.
+
+Two things to note about the mode:
+
+- **Only the selection moves into Rec.709.** Every operator — hue rotation,
+  saturation, luminance, the gamut protector — still runs on the untouched
+  DaVinci Wide Gamut values. Nothing is clipped, and wide-gamut colour survives
+  the node intact.
+- **The hue rotation is performed in DWG**, so ±100 corresponds to 30° of DWG
+  rotation, which is between roughly 22° and 42° of Rec.709 rotation depending
+  on where you are on the circle. The slider is therefore slightly stronger in
+  the greens than in the warms. This is a magnitude difference, not a selection
+  error, and it is well inside the range you would adjust by eye anyway.
+
 Two things this deliberately does **not** do:
 
-- **Primaries are never converted.** Hue angles are measured in whatever
-  primaries you feed in. With Rec.709, P3 or DaVinci Wide Gamut the eight named
-  regions land where you expect. With a very wide encoding such as ACES AP0 the
-  angles are noticeably different — put a Colour Space Transform in front of the
-  node and its inverse behind it if you want the named regions to match the
-  standard photographic hue wheel. Sandwiching the mixer between CSTs is the
-  normal professional way to pin down its working space, and it is the
-  recommended workflow for anything more exotic than the three options above.
+- **Primaries are converted for selection only, and only in DaVinci WG mode.**
+  In the other three modes hue angles are measured in whatever primaries you feed
+  in. With Rec.709 or P3 the named regions land where you expect. With a very
+  wide encoding such as ACES AP0 they do not — put a Colour Space Transform in
+  front of the node and its inverse behind it, which is the normal professional
+  way to pin down a tool's working space.
 - **Luma is measured with Rec.709 weights** (0.2126 / 0.7152 / 0.0722) in the
   working encoding. For other primaries this is an approximation. It is used
   only as a lightness metric — as the pivot for chroma scaling and as the target
-  for Preserve Luminance — and never leaves the pixel's own colour space.
+  for Preserve Luminance — and never leaves the pixel's own colour space. Note
+  that DaVinci Wide Gamut's *own* luminance weights are (0.274, 0.874, −0.148):
+  the negative blue coefficient comes from its blue primary sitting below the
+  spectral locus, and a pivot that can go negative is useless for chroma
+  scaling. The Rec.709 weights are strictly positive and well behaved, which is
+  why they are used throughout.
 
 HDR and out-of-range values are handled rather than clamped. The saturation
 metric is scale invariant, so it reads the same at any exposure; the display
@@ -261,16 +359,24 @@ yellow and green regions, so treat them as a pair.
 
 - **It is not Lightroom.** Same class of behaviour, different numbers. Do not
   expect a Lightroom preset to transfer by copying slider values.
-- **Primaries are not converted.** The named regions assume Rec.709-like
-  primaries; with much wider primaries the hue angles shift. Use a CST sandwich.
+- **Primaries are converted for selection only in DaVinci WG mode.** The other
+  three modes assume Rec.709-like primaries; with much wider primaries (ACES AP0
+  in particular) the hue angles shift and you should use a CST sandwich.
 - **The DCTL cannot know its own colour space.** Resolve does not tell a DCTL
   what it is being handed, so Input Encoding has to be set by hand. Setting it
   wrong is not destructive — it mainly changes how Luminance behaves — but it
   will not feel right.
 - **`Log direct` treats all log curves alike.** One stop is taken to be 0.0733
-  code values, which is exact for DaVinci Intermediate and close for LogC,
-  S-Log3 and V-Log. If you need an exact stop in some other curve, work in
-  `Scene Linear` between CSTs.
+  code values, which is exact for DaVinci Intermediate (and therefore for the
+  DaVinci WG mode) and close for LogC, S-Log3 and V-Log. If you need an exact
+  stop in some other curve, work in `Scene Linear` between CSTs.
+- **In DaVinci WG mode the Hue slider rotates in DWG**, so ±100 is 30° of DWG
+  rotation — between about 22° and 42° of Rec.709 rotation depending on where
+  you are on the circle. Selection is exact; only the slider's strength varies
+  slightly by region.
+- **DaVinci WG mode costs six extra transcendentals per pixel** (three to decode
+  out of DaVinci Intermediate, three to re-encode into Rec.709). Use `Log direct`
+  if you would rather have the speed and do not mind the green and purple drift.
 - **Resolve's DCTL UI has no group headers**, so all 35 controls appear as one
   flat list in the Inspector. The labels are prefixed with the region name and
   ordered Global → the eight colours → Advanced.
@@ -336,14 +442,14 @@ that ships, not a copy of it, and the build runs with `-Wall -Wextra -Werror`.
 implementation of the same maths, used to cross-check the compiled DCTL and to
 render the images in `tests/images`.
 
-**Results — 806 checks, all passing.**
+**Results — 841 checks, all passing.**
 
 | Area | What is checked | Result |
 |---|---|---|
 | Compilation | builds clean as C++11 **and** as C99, both with `-Wall -Wextra -Werror` | pass |
 | Source validation | self-contained (no `#include`), correct `transform()` signature, every function `__DEVICE__`, all 35 UI declarations with the right types / defaults / ranges, combo enumerations in sync with the shim | pass |
-| DCTL vs. reference | 32 parameter sets × 776 pixels, including HDR, negative and near-neutral values | worst relative disagreement **2.4 × 10⁻⁷** — 32-bit float rounding |
-| Identity | all controls neutral, in all three encodings | **bit exact** |
+| DCTL vs. reference | 34 parameter sets × 776 pixels (plus DaVinci WG cases over a dedicated DWG pixel set), including HDR, negative and near-neutral values | worst relative disagreement **2.4 × 10⁻⁷** — 32-bit float rounding |
+| Identity | all controls neutral, in all four encodings | **bit exact** |
 | `Amount = 0`, `Bypass` | with all 24 sliders at their extremes | **bit exact** |
 | `Amount` cross-fade | is a true blend of input and full-strength output | max error 10⁻⁶ |
 | Locality | a blue-only adjustment leaves red pixels **bit exactly** unchanged | pass |
@@ -354,7 +460,7 @@ render the images in `tests/images`.
 | Vibrance | lifts a weak colour > 1.5× more than a saturated one, holds back over skin, is not equivalent to Global Saturation, and keeps more of the strongest colours when negative | pass |
 | Protect Neutrals | cuts the move on a near-neutral pixel to under 35%; exact neutrals never move at any setting | pass |
 | Gamut | at protection 100 no in-gamut pixel is left with a negative channel; at 0 excursions are wider; display Luminance +100 keeps white at white | pass |
-| Stability | 27 extreme slider combinations × 2 falloffs × 2 protection settings over 776 pixels, plus hostile inputs (10⁻³⁰, 10⁶, negative, exact black and white) in all three encodings | no NaN, no infinity, nothing unbounded |
+| Stability | 27 extreme slider combinations × 2 falloffs × 2 protection settings over 776 pixels, plus hostile inputs (10⁻³⁰, 10⁶, negative, exact black and white) in all four encodings | no NaN, no infinity, nothing unbounded |
 | Encodings | DI round trip to 10⁻⁶; log Luminance +100 offsets by exactly one stop; linear Luminance scales all channels equally to 2×; a warm linear pixel is correctly classified as orange | pass |
 
 The images in `tests/images` are rendered by the reference implementation from a

@@ -23,8 +23,19 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "reference"))
 
 from color_mixer_reference import (  # noqa: E402
-    MixerParams, PV_MASK, REGION_CENTRES, REGION_NAMES, process_pixel,
+    ENC_DISPLAY, MixerParams, PV_MASK, REGION_CENTRES, REGION_NAMES, process_pixel,
 )
+
+
+def params(**kwargs):
+    """MixerParams for the charts, which are display-referred sRGB.
+
+    The DCTL defaults to DaVinci WG Intermediate because that is where it sits
+    in a colour-managed node tree; these charts are plain display values, so
+    they say so.
+    """
+    kwargs.setdefault("encoding", ENC_DISPLAY)
+    return MixerParams(**kwargs)
 
 OUT_DIR = os.path.join(HERE, "images")
 
@@ -176,39 +187,39 @@ def main():
     emit("00_reference_chart", chart, "untouched reference chart")
 
     # ---- the documented example workflows --------------------------------
-    skin = MixerParams()
+    skin = params()
     skin.set_region("orange", hue=-12.0, sat=-14.0, lum=22.0)
     skin.set_region("red", hue=8.0, sat=-8.0, lum=10.0)
     emit("01_skin", apply(chart, skin), "skin: oranges opened up and calmed down")
 
-    sky = MixerParams()
+    sky = params()
     sky.set_region("blue", hue=-18.0, sat=28.0, lum=-30.0)
     sky.set_region("aqua", hue=-25.0, sat=10.0, lum=-15.0)
     emit("02_sky", apply(chart, sky), "sky: deeper, less cyan blues")
 
-    foliage = MixerParams()
+    foliage = params()
     foliage.set_region("green", hue=-22.0, sat=-18.0, lum=12.0)
     foliage.set_region("yellow", hue=15.0, sat=-10.0, lum=8.0)
     emit("03_foliage", apply(chart, foliage), "foliage: yellower, calmer greens")
 
     # ---- globals ----------------------------------------------------------
-    emit("04_global_saturation_plus100", apply(chart, MixerParams(global_saturation=100.0)),
+    emit("04_global_saturation_plus100", apply(chart, params(global_saturation=100.0)),
          "global saturation +100")
-    emit("05_global_saturation_minus100", apply(chart, MixerParams(global_saturation=-100.0)),
+    emit("05_global_saturation_minus100", apply(chart, params(global_saturation=-100.0)),
          "global saturation -100")
-    emit("06_vibrance_plus100", apply(chart, MixerParams(vibrance=100.0)), "vibrance +100")
-    emit("07_vibrance_minus100", apply(chart, MixerParams(vibrance=-100.0)), "vibrance -100")
+    emit("06_vibrance_plus100", apply(chart, params(vibrance=100.0)), "vibrance +100")
+    emit("07_vibrance_minus100", apply(chart, params(vibrance=-100.0)), "vibrance -100")
 
     # ---- extremes ---------------------------------------------------------
     for name, value, label in (("08_all_plus100", 100.0, "+100"),
                                ("09_all_minus100", -100.0, "-100")):
-        p = MixerParams(protect_neutrals=0.0, hue_falloff=0.0)
+        p = params(protect_neutrals=0.0, hue_falloff=0.0)
         p.hue = [value] * 8
         p.saturation = [value] * 8
         p.luminance = [value] * 8
         emit(name, apply(chart, p), "every one of the 24 controls at %s" % label)
 
-    alternating = MixerParams(protect_neutrals=0.0)
+    alternating = params(protect_neutrals=0.0)
     alternating.hue = [100.0, -100.0] * 4
     alternating.saturation = [100.0, -100.0] * 4
     alternating.luminance = [-100.0, 100.0] * 4
@@ -220,7 +231,7 @@ def main():
     for name in REGION_NAMES:
         for kind in ("hue", "sat", "lum"):
             for value in (100.0, -100.0):
-                p = MixerParams()
+                p = params()
                 p.set_region(name, **{kind: value})
                 sheet += apply(hue_strip(9), p)
                 if value > 0.0:
@@ -232,7 +243,7 @@ def main():
     # ---- region masks -----------------------------------------------------
     masks = []
     for index in range(8):
-        p = MixerParams(preview=PV_MASK, preview_region=index)
+        p = params(preview=PV_MASK, preview_region=index)
         masks += apply(hue_strip(16), p)
         masks += [[(0.0, 0.0, 0.0)] * WIDTH] * 3
     emit("12_region_masks", masks,

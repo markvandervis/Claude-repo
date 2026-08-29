@@ -43,6 +43,19 @@
 //                           is a true scene exposure change (+/-1 stop at
 //                           +/-100).
 //
+//    DaVinci WG Intermediate (default)
+//                         : input is DaVinci Wide Gamut / DaVinci Intermediate,
+//                           i.e. the output of a Colour Space Transform at the
+//                           head of the node tree.  Processing is identical to
+//                           Log direct - the mixer runs on the DaVinci WG values
+//                           and nothing is ever clipped to a smaller gamut - but
+//                           the hue angle used to CHOOSE the regions is measured
+//                           after carrying the pixel into Rec.709, which is the
+//                           space the grade is viewed in downstream of CST OUT.
+//                           Without that step DaVinci WG's much wider primaries
+//                           put a green leaf 13 degrees below where the eye puts
+//                           it, so the Green slider would only half catch it.
+//
 //    Scene Linear         : input is scene-linear.  It is encoded to DaVinci
 //                           Intermediate for processing and decoded back
 //                           afterwards, so hue selection stays perceptual and
@@ -101,7 +114,7 @@
 //  UI
 // ----------------------------------------------------------------------------
 
-DEFINE_UI_PARAMS(uiEncoding, Input Encoding, DCTLUI_COMBO_BOX, 0, {ENC_DISPLAY, ENC_LOG, ENC_LINEAR}, {Display Rec.709 sRGB, Log direct, Scene Linear})
+DEFINE_UI_PARAMS(uiEncoding, Input Encoding, DCTLUI_COMBO_BOX, 3, {ENC_DISPLAY, ENC_LOG, ENC_LINEAR, ENC_DWG}, {Display Rec.709 sRGB, Log direct, Scene Linear, DaVinci WG Intermediate})
 
 // --- Global -----------------------------------------------------------------
 DEFINE_UI_PARAMS(uiGlobalSat, Global Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
@@ -193,6 +206,13 @@ DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
 #define LCM_LUMA_R              0.2126f
 #define LCM_LUMA_G              0.7152f
 #define LCM_LUMA_B              0.0722f
+
+// sRGB / Rec.709 opto-electronic transfer function.
+#define LCM_SRGB_CUT            0.0031308f
+#define LCM_SRGB_SLOPE          12.92f
+#define LCM_SRGB_A              1.055f
+#define LCM_SRGB_B              0.055f
+#define LCM_SRGB_GAMMA          (1.0f / 2.4f)
 
 // DaVinci Intermediate transfer-function constants (published by Blackmagic).
 #define LCM_DI_A                0.0075f
@@ -293,6 +313,18 @@ __DEVICE__ float LcmDiDecode(float y)
     return y / LCM_DI_M;
 }
 
+// Rec.709 / sRGB opto-electronic transfer function, with out-of-gamut values
+// held at zero.  The linear toe is not cosmetic: a pure power function has an
+// unbounded slope at zero, which makes the measured hue of a fully saturated
+// colour hypersensitive.  Measured over a saturated hue sweep, the toe cuts the
+// worst hue step by a factor of twelve.
+__DEVICE__ float LcmSrgbEncode(float x)
+{
+    if (x <= 0.0f)            return 0.0f;
+    if (x <= LCM_SRGB_CUT)    return x * LCM_SRGB_SLOPE;
+    return LCM_SRGB_A * _powf(x, LCM_SRGB_GAMMA) - LCM_SRGB_B;
+}
+
 __DEVICE__ float3 RGBToWorkingSpace(float3 rgb, int encoding)
 {
     if (encoding == ENC_LINEAR)
@@ -363,6 +395,47 @@ __DEVICE__ float3 ApplyHue(float hueDeg, float mx, float chroma)
     return make_float3(LcmHueChannel(5.0f, hueDeg, mx, chroma),
                        LcmHueChannel(3.0f, hueDeg, mx, chroma),
                        LcmHueChannel(1.0f, hueDeg, mx, chroma));
+}
+
+
+// The hue angle used to CHOOSE the colour regions, which is not always the hue
+// angle of the working values.
+//
+// In every mode but DaVinci WG the working values already live in the space the
+// region names refer to, so the working angle is used directly.
+//
+// In DaVinci WG mode the pixel is carried into the Rec.709 display encoding
+// first - decode out of DaVinci Intermediate, matrix DaVinci Wide Gamut into
+// Rec.709 primaries, re-encode with the sRGB transfer function - and the angle
+// is measured there.  That is the space the grade is actually viewed in, one
+// node tree later at CST OUT, and it is where "orange skin near 30 degrees" is
+// true.  Measured against a set of photographic patches this recovers their
+// Rec.709 hue to within 0.05 degrees, where reading the DaVinci WG values
+// directly is out by up to 21 degrees on greens.
+//
+// Only the SELECTION is measured there.  Every operator still runs on the
+// untouched DaVinci Wide Gamut values, so no colour is clipped to Rec.709 and
+// the wide gamut survives the node intact.
+//
+// The matrix is DaVinci Wide Gamut -> XYZ (published by Blackmagic) composed
+// with the standard XYZ -> Rec.709 matrix, with each row normalised to sum to
+// exactly 1 so that a neutral maps to a neutral exactly.
+__DEVICE__ float LcmSelectionHue(float3 w, float hueWorking, int encoding)
+{
+    if (encoding != ENC_DWG) return hueWorking;
+
+    float r = LcmDiDecode(w.x);
+    float g = LcmDiDecode(w.y);
+    float b = LcmDiDecode(w.z);
+
+    float3 rec709 = make_float3(
+        LcmSrgbEncode( 1.89871504f * r + -0.79180471f * g + -0.10691033f * b),
+        LcmSrgbEncode(-0.16894835f * r +  1.48839859f * g + -0.31945024f * b),
+        LcmSrgbEncode(-0.12152602f * r + -0.31546761f * g +  1.43699363f * b));
+
+    float mx = LcmMax3(rec709);
+    float mn = LcmMin3(rec709);
+    return RGBToHue(rec709, mx, mx - mn);
 }
 
 
@@ -504,9 +577,10 @@ __DEVICE__ float3 PreserveLuminance(float3 c, float lumaBefore, float strength, 
 
 // Region luminance.
 //
-//   Log domain     : a code-value offset, which is what an exposure change is
+//   Log domains    : a code-value offset, which is what an exposure change is
 //                    in any log encoding.  Hue and chroma are untouched because
-//                    all three channels move together.
+//                    all three channels move together.  This covers both the
+//                    Log direct and DaVinci WG modes.
 //   Linear domain  : the working value is decoded, scaled and re-encoded, so
 //                    the move is exactly an exposure change in the scene-linear
 //                    values the node was handed.
@@ -525,8 +599,6 @@ __DEVICE__ float3 ApplyLuminance(float3 c, float amount, int encoding)
 {
     if (amount == 0.0f) return c;
 
-    if (encoding == ENC_LOG) return LcmOffset3(c, amount * LCM_LOG_STOP);
-
     if (encoding == ENC_LINEAR)
     {
         float gain = _exp2f(amount);                 // +/- one stop at +/-100
@@ -534,6 +606,9 @@ __DEVICE__ float3 ApplyLuminance(float3 c, float amount, int encoding)
                            LcmDiEncode(LcmDiDecode(c.y) * gain),
                            LcmDiEncode(LcmDiDecode(c.z) * gain));
     }
+
+    // every remaining non-display mode has a log working domain
+    if (encoding != ENC_DISPLAY) return LcmOffset3(c, amount * LCM_LOG_STOP);
 
     float mx = LcmMax3(c);
     if (mx <= LCM_EPS) return c;                     // black stays black
@@ -593,7 +668,7 @@ __DEVICE__ float3 ProtectSaturation(float3 c, float satBefore, float protect)
 //  triplet by the caller, so this function is independent of the UI layout.
 // ----------------------------------------------------------------------------
 
-__DEVICE__ float3 ApplyColorMixer(float3 w, float hueDeg,
+__DEVICE__ float3 ApplyColorMixer(float3 w, float hueWorking, float hueSelect,
                                   float dHue, float dSat, float dLum,
                                   float globalSat, float vibrance,
                                   float protectNeutrals, float preserveLum,
@@ -608,7 +683,9 @@ __DEVICE__ float3 ApplyColorMixer(float3 w, float hueDeg,
     float satIn  = LcmGamutSaturation(mx, chroma);   // reference for gamut protection
 
     // --- global saturation and vibrance, folded into one chroma gain --------
-    float kGlobal = ApplyGlobalSaturation(globalSat) * ApplyVibrance(vibrance, sat, hueDeg);
+    // Vibrance's skin band is a perceptual idea, so it is evaluated against the
+    // selection hue, exactly like the eight regions are.
+    float kGlobal = ApplyGlobalSaturation(globalSat) * ApplyVibrance(vibrance, sat, hueSelect);
     if (kGlobal != 1.0f)
     {
         c = LcmScaleChroma(c, kGlobal);
@@ -627,7 +704,9 @@ __DEVICE__ float3 ApplyColorMixer(float3 w, float hueDeg,
     if (hueAmt != 0.0f)
     {
         float lumaBefore = LcmLuma(c);
-        c = ApplyHue(LcmWrapHue(hueDeg + hueAmt * LCM_HUE_MAX_DEG), mx, chroma);
+        // the rotation itself happens in the working encoding, so it is the
+        // working angle that is rotated, not the one used for selection
+        c = ApplyHue(LcmWrapHue(hueWorking + hueAmt * LCM_HUE_MAX_DEG), mx, chroma);
         c = PreserveLuminance(c, lumaBefore, preserveLum, encoding);
     }
 
@@ -701,10 +780,11 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
     float mx     = LcmMax3(w);
     float mn     = LcmMin3(w);
     float chroma = mx - mn;
-    float hueDeg = RGBToHue(w, mx, chroma);
+    float hueWork = RGBToHue(w, mx, chroma);
+    float hueSel  = LcmSelectionHue(w, hueWork, uiEncoding);
 
     // --- region weights (a partition of unity over the hue circle) ----------
-    float3 band  = LcmFindHueBand(hueDeg, uiHueFalloff * k);
+    float3 band  = LcmFindHueBand(hueSel, uiHueFalloff * k);
     int seg      = (int)band.x;
     int segNext  = (int)band.y;
     float blend  = band.z;
@@ -734,7 +814,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
                   wAqua    * uiAquaLum    + wBlue   * uiBlueLum   +
                   wPurple  * uiPurpleLum  + wMagenta * uiMagentaLum) * k;
 
-    float3 outW = ApplyColorMixer(w, hueDeg, dHue, dSat, dLum,
+    float3 outW = ApplyColorMixer(w, hueWork, hueSel, dHue, dSat, dLum,
                                   uiGlobalSat * k, uiVibrance * k,
                                   uiProtectNeutrals * k, uiPreserveLum * k,
                                   uiSatProtect * k, uiEncoding);

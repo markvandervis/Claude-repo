@@ -27,9 +27,10 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "reference"))
 
 from color_mixer_reference import (  # noqa: E402
-    ENC_DISPLAY, ENC_LOG, ENC_LINEAR, PV_MASK, PV_ISOLATE,
-    REGION_NAMES, REGION_CENTRES, MixerParams,
+    ENC_DISPLAY, ENC_LOG, ENC_LINEAR, ENC_DWG, PV_MASK, PV_ISOLATE,
+    REGION_NAMES, REGION_CENTRES, MixerParams, DWG_TO_REC709,
     process_pixel, region_weights, luma, saturation_measure, rgb_to_hue,
+    di_encode,
 )
 
 DCTL_PATH = os.path.join(ROOT, "Lightroom_Color_Mixer.dctl")
@@ -37,6 +38,18 @@ HARNESS = os.path.join(HERE, "dctl_harness")
 
 _failures = []
 _tests_run = 0
+
+
+def params(**kwargs):
+    """MixerParams defaulting to the display domain.
+
+    The DCTL itself defaults to DaVinci WG Intermediate, which is where it is
+    meant to sit in a colour-managed node tree.  Most of the tests below are
+    written against display-referred values, so they say so explicitly rather
+    than inheriting whichever default the DCTL happens to ship with.
+    """
+    kwargs.setdefault("encoding", ENC_DISPLAY)
+    return MixerParams(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +95,10 @@ def hsv_to_rgb(h, s, v):
     return (f32(r + m), f32(g + m), f32(b + m))
 
 
-def run_dctl(params: MixerParams, pixels):
+def run_dctl(settings: MixerParams, pixels):
     """Run the compiled DCTL harness over a list of pixels."""
     payload = "".join("%s %s %s\n" % (a.hex(), b.hex(), c.hex()) for a, b, c in pixels)
-    result = subprocess.run([HARNESS] + params.to_dctl_args(), input=payload,
+    result = subprocess.run([HARNESS] + settings.to_dctl_args(), input=payload,
                             capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError("harness failed: " + result.stderr)
@@ -99,8 +112,8 @@ def run_dctl(params: MixerParams, pixels):
     return out
 
 
-def run_reference(params: MixerParams, pixels):
-    return [process_pixel(px, params) for px in pixels]
+def run_reference(settings: MixerParams, pixels):
+    return [process_pixel(px, settings) for px in pixels]
 
 
 def max_abs_diff(a, b):
@@ -177,16 +190,103 @@ LOG_PIXELS = f32px([(0.09, 0.09, 0.09), (0.5, 0.42, 0.38), (0.62, 0.55, 0.40),
               (0.30, 0.45, 0.33), (0.40, 0.48, 0.60), (0.72, 0.60, 0.52),
               (0.10, 0.30, 0.55), (0.55, 0.30, 0.45), (0.95, 0.90, 0.80)])
 
+def _matmul(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+
+
+def _matvec(m, v):
+    return [sum(m[i][j] * v[j] for j in range(3)) for i in range(3)]
+
+
+def _npm(primaries, white):
+    """RGB -> XYZ from chromaticities, by the standard derivation.
+
+    Derived here from first principles so that the test's forward matrix is
+    genuinely independent of the inverse matrix baked into the DCTL.
+    """
+    (xr, yr), (xg, yg), (xb, yb) = primaries
+    xw, yw = white
+    m = [[xr / yr, xg / yg, xb / yb],
+         [1.0, 1.0, 1.0],
+         [(1 - xr - yr) / yr, (1 - xg - yg) / yg, (1 - xb - yb) / yb]]
+    w = [xw / yw, 1.0, (1 - xw - yw) / yw]
+    rows = [row[:] + [w[i]] for i, row in enumerate(m)]
+    for col in range(3):
+        pivot = max(range(col, 3), key=lambda r: abs(rows[r][col]))
+        rows[col], rows[pivot] = rows[pivot], rows[col]
+        for r in range(3):
+            if r != col:
+                f = rows[r][col] / rows[col][col]
+                for k in range(col, 4):
+                    rows[r][k] -= f * rows[col][k]
+    scale = [rows[i][3] / rows[i][i] for i in range(3)]
+    return [[m[i][j] * scale[j] for j in range(3)] for i in range(3)]
+
+
+def _inverse(a):
+    det = (a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1])
+           - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+           + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]))
+    return [[(a[(i + 1) % 3][(j + 1) % 3] * a[(i + 2) % 3][(j + 2) % 3]
+              - a[(i + 1) % 3][(j + 2) % 3] * a[(i + 2) % 3][(j + 1) % 3]) / det
+             for i in range(3)] for j in range(3)]
+
+
+D65 = (0.3127, 0.3290)
+REC709_PRIMARIES = [(0.640, 0.330), (0.300, 0.600), (0.150, 0.060)]
+DWG_PRIMARIES = [(0.8000, 0.3130), (0.1682, 0.9877), (0.0790, -0.1155)]
+
+#: linear Rec.709 -> linear DaVinci Wide Gamut, derived from the chromaticities
+REC709_TO_DWG = _matmul(_inverse(_npm(DWG_PRIMARIES, D65)), _npm(REC709_PRIMARIES, D65))
+
+
+def srgb_to_linear(x):
+    return x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4
+
+
+def rec709_display_to_dwg_di(rgb):
+    """What CST IN puts on the wire for a colour we know in Rec.709 terms."""
+    lin = _matvec(REC709_TO_DWG, [srgb_to_linear(v) for v in rgb])
+    return tuple(f32(di_encode(v)) for v in lin)
+
+
 LINEAR_PIXELS = f32px([(0.18, 0.18, 0.18), (0.30, 0.12, 0.05), (0.05, 0.14, 0.04),
                  (0.10, 0.20, 0.55), (2.5, 1.8, 1.2), (0.002, 0.001, 0.0005),
                  (0.0, 0.0, 0.0), (16.0, 8.0, 4.0), (0.5, -0.01, 0.02)])
+
+
+#: Photographic colours, specified in Rec.709 display terms and carried into
+#: DaVinci Wide Gamut / DaVinci Intermediate the way CST IN would carry them.
+DWG_REFERENCE = [
+    ("skin light",   (0.847, 0.678, 0.573)),
+    ("skin mid",     (0.702, 0.502, 0.400)),
+    ("skin deep",    (0.396, 0.263, 0.212)),
+    ("foliage sun",  (0.353, 0.478, 0.208)),
+    ("foliage mid",  (0.259, 0.400, 0.196)),
+    ("foliage dark", (0.145, 0.243, 0.157)),
+    ("sky clear",    (0.361, 0.545, 0.792)),
+    ("sky deep",     (0.169, 0.322, 0.616)),
+    ("red cloth",    (0.784, 0.157, 0.184)),
+    ("orange sign",  (0.925, 0.588, 0.106)),
+    ("yellow paint", (0.949, 0.867, 0.271)),
+    ("aqua tile",    (0.216, 0.706, 0.667)),
+    ("purple",       (0.541, 0.310, 0.647)),
+    ("magenta",      (0.847, 0.235, 0.596)),
+]
+
+DWG_PIXELS = ([rec709_display_to_dwg_di(rgb) for _, rgb in DWG_REFERENCE]
+              + [rec709_display_to_dwg_di(hsv_to_rgb(h, s, v))
+                 for h in range(0, 360, 15) for s in (0.2, 0.7, 1.0) for v in (0.25, 0.8)]
+              + f32px([(0.09, 0.09, 0.09), (0.5, 0.5, 0.5), (0.95, 0.95, 0.95),
+                       (0.0, 0.0, 0.0), (1.2, 1.1, 1.0), (0.4, -0.05, 0.2)]))
 
 
 # ===========================================================================
 # 1. static validation of the DCTL source
 # ===========================================================================
 def parse_ui_params(source):
-    params = {}
+    """Parse every DEFINE_UI_PARAMS declaration into name -> [fields]."""
+    declared = {}
     pattern = re.compile(r"DEFINE_UI_PARAMS\s*\((.*?)\)\s*$", re.M)
     for match in pattern.finditer(source):
         body = match.group(1)
@@ -203,8 +303,8 @@ def parse_ui_params(source):
             else:
                 current += ch
         parts.append(current.strip())
-        params[parts[0]] = parts
-    return params
+        declared[parts[0]] = parts
+    return declared
 
 
 def test_static_source():
@@ -224,16 +324,16 @@ def test_static_source():
                              r"([A-Za-z_]\w*)\s*\([^;]*\)\s*\{", source, re.M):
         check(False, "function %s is defined without a __DEVICE__ qualifier" % match.group(2))
 
-    params = parse_ui_params(source)
-    check(len(params) == 35, "expected 35 UI parameters, found %d" % len(params))
+    declared = parse_ui_params(source)
+    check(len(declared) == 35, "expected 35 UI parameters, found %d" % len(declared))
 
     pretty = ("Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta")
     for name in pretty:
         for suffix in ("Hue", "Sat", "Lum"):
             key = "ui%s%s" % (name, suffix)
-            if not check(key in params, "missing UI parameter %s" % key):
+            if not check(key in declared, "missing UI parameter %s" % key):
                 continue
-            parts = params[key]
+            parts = declared[key]
             check(parts[2] == "DCTLUI_SLIDER_FLOAT", "%s must be a float slider" % key)
             check(float(parts[3]) == 0.0, "%s must default to 0" % key)
             check(float(parts[4]) == -100.0, "%s must have minimum -100" % key)
@@ -246,23 +346,23 @@ def test_static_source():
                                  ("uiPreserveLum", 75.0, 0.0, 100.0),
                                  ("uiHueFalloff", 50.0, 0.0, 100.0),
                                  ("uiSatProtect", 50.0, 0.0, 100.0)):
-        if not check(key in params, "missing UI parameter %s" % key):
+        if not check(key in declared, "missing UI parameter %s" % key):
             continue
-        parts = params[key]
+        parts = declared[key]
         check(float(parts[3]) == default, "%s default should be %g" % (key, default))
         check(float(parts[4]) == lo and float(parts[5]) == hi,
               "%s range should be %g..%g" % (key, lo, hi))
 
-    check(params.get("uiBypass", [None, None, None])[2] == "DCTLUI_CHECK_BOX",
+    check(declared.get("uiBypass", [None, None, None])[2] == "DCTLUI_CHECK_BOX",
           "Bypass must be a check box")
 
     # combo enumerations must match the enumerations declared in the shim
     shim = open(os.path.join(HERE, "dctl_shim.h")).read()
-    for key, expected in (("uiEncoding", ["ENC_DISPLAY", "ENC_LOG", "ENC_LINEAR"]),
+    for key, expected in (("uiEncoding", ["ENC_DISPLAY", "ENC_LOG", "ENC_LINEAR", "ENC_DWG"]),
                           ("uiPreview", ["PV_OFF", "PV_MASK", "PV_ISOLATE"]),
                           ("uiPreviewRegion", ["PR_RED", "PR_ORANGE", "PR_YELLOW", "PR_GREEN",
                                                "PR_AQUA", "PR_BLUE", "PR_PURPLE", "PR_MAGENTA"])):
-        parts = params[key]
+        parts = declared[key]
         names = [n.strip() for n in parts[4].strip("{}").split(",")]
         labels = [n.strip() for n in parts[5].strip("{}").split(",")]
         check(names == expected, "%s enumeration should be %s, found %s" % (key, expected, names))
@@ -280,46 +380,54 @@ def test_cross_validation():
 
     cases = []
 
-    base = MixerParams()
+    base = params()
     cases.append(("defaults", base, PIXELS))
 
     for i, name in enumerate(REGION_NAMES):
         for kind, value in (("hue", 70.0), ("sat", -60.0), ("lum", 45.0)):
-            p = MixerParams()
+            p = params()
             p.set_region(name, **{kind: value})
             cases.append(("%s %s" % (name, kind), p, PIXELS))
 
-    p = MixerParams(global_saturation=60.0, vibrance=-40.0)
+    p = params(global_saturation=60.0, vibrance=-40.0)
     cases.append(("global sat + vibrance", p, PIXELS))
 
-    p = MixerParams(hue_falloff=0.0, protect_neutrals=100.0, saturation_protection=100.0,
+    p = params(hue_falloff=0.0, protect_neutrals=100.0, saturation_protection=100.0,
                     preserve_luminance=100.0)
     p.hue = [100.0] * 8
     p.saturation = [100.0] * 8
     p.luminance = [-100.0] * 8
     cases.append(("all extreme", p, PIXELS))
 
-    p = MixerParams(encoding=ENC_LOG, protect_neutrals=10.0)
+    p = params(encoding=ENC_LOG, protect_neutrals=10.0)
     p.set_region("orange", hue=-30.0, sat=40.0, lum=60.0)
     cases.append(("log domain", p, LOG_PIXELS))
 
-    p = MixerParams(encoding=ENC_LINEAR)
+    p = params(encoding=ENC_LINEAR)
     p.set_region("blue", hue=25.0, sat=-50.0, lum=-70.0)
     cases.append(("linear domain", p, LINEAR_PIXELS))
 
-    p = MixerParams(amount=37.0, vibrance=80.0)
+    p = params(encoding=ENC_DWG, protect_neutrals=20.0)
+    p.set_region("green", hue=-40.0, sat=-35.0, lum=25.0)
+    p.set_region("orange", hue=15.0, sat=20.0, lum=-10.0)
+    cases.append(("davinci wide gamut", p, DWG_PIXELS))
+
+    p = params(encoding=ENC_DWG, vibrance=70.0, global_saturation=-30.0)
+    cases.append(("davinci wide gamut globals", p, DWG_PIXELS))
+
+    p = params(amount=37.0, vibrance=80.0)
     cases.append(("partial amount", p, PIXELS))
 
-    p = MixerParams(preview=PV_MASK, preview_region=1)
+    p = params(preview=PV_MASK, preview_region=1)
     cases.append(("preview mask", p, PIXELS))
 
-    p = MixerParams(preview=PV_ISOLATE, preview_region=5, global_saturation=30.0)
+    p = params(preview=PV_ISOLATE, preview_region=5, global_saturation=30.0)
     cases.append(("preview isolate", p, PIXELS))
 
     worst = 0.0
-    for label, params, pixels in cases:
-        got = run_dctl(params, pixels)
-        want = run_reference(params, pixels)
+    for label, case, pixels in cases:
+        got = run_dctl(case, pixels)
+        want = run_reference(case, pixels)
         if not check(len(got) == len(pixels), "%s: harness returned %d of %d pixels"
                      % (label, len(got), len(pixels))):
             continue
@@ -340,12 +448,13 @@ def test_identity():
 
     for encoding, label, pixels in ((ENC_DISPLAY, "display", PIXELS),
                                     (ENC_LOG, "log", LOG_PIXELS),
-                                    (ENC_LINEAR, "linear", LINEAR_PIXELS)):
-        got = run_dctl(MixerParams(encoding=encoding), pixels)
+                                    (ENC_LINEAR, "linear", LINEAR_PIXELS),
+                                    (ENC_DWG, "davinci wide gamut", DWG_PIXELS)):
+        got = run_dctl(params(encoding=encoding), pixels)
         check(got == pixels, "%s: neutral settings must be a bit exact identity" % label)
 
     # amount = 0 with everything pushed to the extremes
-    p = MixerParams(amount=0.0, global_saturation=100.0, vibrance=-100.0)
+    p = params(amount=0.0, global_saturation=100.0, vibrance=-100.0)
     p.hue = [100.0] * 8
     p.saturation = [-100.0] * 8
     p.luminance = [100.0] * 8
@@ -357,7 +466,7 @@ def test_identity():
     check(run_dctl(p, PIXELS) == PIXELS, "Bypass must be a bit exact bypass")
 
     # amount cross-fade is a true blend of input and full-strength output
-    p = MixerParams(global_saturation=80.0)
+    p = params(global_saturation=80.0)
     full = run_dctl(p, PIXELS)
     p.amount = 40.0
     partial = run_dctl(p, PIXELS)
@@ -368,7 +477,7 @@ def test_identity():
     check(worst < 1e-6, "Amount must linearly cross-fade input and processed (error %.3g)" % worst)
 
     # a region slider must not disturb pixels outside its influence
-    p = MixerParams()
+    p = params()
     p.set_region("blue", hue=100.0, sat=100.0, lum=100.0)
     reds = [hsv_to_rgb(h, s, v) for h in (0.0, 10.0, 20.0) for s in (0.4, 0.9) for v in (0.3, 0.8)]
     check(run_dctl(p, reds) == reds,
@@ -392,7 +501,7 @@ def test_individual_controls():
 
         # ---- hue -------------------------------------------------------
         for direction in (+100.0, -100.0):
-            p = MixerParams()
+            p = params()
             p.set_region(name, hue=direction)
             out = run_dctl(p, probes)
             moved = rgb_to_hue(out[0], max(out[0]), chroma(out[0]))
@@ -404,7 +513,7 @@ def test_individual_controls():
             check(out[2:] == neutrals, "%s hue %+g must not move neutrals" % (name, direction))
 
         # ---- saturation ------------------------------------------------
-        p = MixerParams()
+        p = params()
         p.set_region(name, sat=-100.0)
         out = run_dctl(p, probes)
         check(chroma(out[0]) < 1e-6, "%s saturation -100 must reach a true neutral" % name)
@@ -421,7 +530,7 @@ def test_individual_controls():
         # saturation must be monotonic in the slider
         chromas = []
         for value in (-100.0, -50.0, 0.0, 50.0, 100.0):
-            p = MixerParams()
+            p = params()
             p.set_region(name, sat=value)
             chromas.append(chroma(run_dctl(p, [target])[0]))
         check(all(a < b for a, b in zip(chromas, chromas[1:])),
@@ -430,7 +539,7 @@ def test_individual_controls():
         # ---- luminance -------------------------------------------------
         lumas = []
         for value in (-100.0, -50.0, 0.0, 50.0, 100.0):
-            p = MixerParams()
+            p = params()
             p.set_region(name, lum=value)
             out = run_dctl(p, probes)
             lumas.append(luma(out[0]))
@@ -508,7 +617,7 @@ def test_output_continuity():
     section("output continuity across the hue circle")
 
     for falloff in (0.0, 50.0, 100.0):
-        p = MixerParams(hue_falloff=falloff, protect_neutrals=0.0)
+        p = params(hue_falloff=falloff, protect_neutrals=0.0)
         p.hue = [100.0, -100.0] * 4
         p.saturation = [100.0, -100.0] * 4
         p.luminance = [-100.0, 100.0] * 4
@@ -532,7 +641,7 @@ def test_output_continuity():
 
     # the same check on a saturation ramp: crossing into and out of gamut must
     # not produce a visible edge
-    p = MixerParams(saturation_protection=100.0, protect_neutrals=0.0)
+    p = params(saturation_protection=100.0, protect_neutrals=0.0)
     p.saturation = [100.0] * 8
     steps = []
     for divisions in (2000, 8000):
@@ -554,15 +663,15 @@ def test_global_controls():
     neutrals = f32px([(0.0, 0.0, 0.0), (0.5, 0.5, 0.5), (1.0, 1.0, 1.0)])
     colours = [hsv_to_rgb(h, 0.6, 0.7) for h in range(0, 360, 30)]
 
-    check(run_dctl(MixerParams(global_saturation=100.0), neutrals) == neutrals,
+    check(run_dctl(params(global_saturation=100.0), neutrals) == neutrals,
           "global saturation must not tint neutrals")
-    check(run_dctl(MixerParams(global_saturation=-100.0), neutrals) == neutrals,
+    check(run_dctl(params(global_saturation=-100.0), neutrals) == neutrals,
           "global saturation -100 must not disturb neutrals")
 
-    out = run_dctl(MixerParams(global_saturation=-100.0), colours)
+    out = run_dctl(params(global_saturation=-100.0), colours)
     check(max(chroma(px) for px in out) < 1e-6, "global saturation -100 must fully desaturate")
 
-    out = run_dctl(MixerParams(global_saturation=100.0), colours)
+    out = run_dctl(params(global_saturation=100.0), colours)
     check(all(chroma(b) > chroma(a) for a, b in zip(colours, out)),
           "global saturation +100 must increase chroma everywhere")
 
@@ -577,7 +686,7 @@ def test_global_controls():
     # ---- vibrance ------------------------------------------------------
     weak = hsv_to_rgb(200.0, 0.15, 0.7)
     strong = hsv_to_rgb(200.0, 0.95, 0.7)
-    out = run_dctl(MixerParams(vibrance=100.0), [weak, strong])
+    out = run_dctl(params(vibrance=100.0), [weak, strong])
     weak_gain = chroma(out[0]) / chroma(weak)
     strong_gain = chroma(out[1]) / chroma(strong)
     check(weak_gain > strong_gain * 1.5,
@@ -586,29 +695,29 @@ def test_global_controls():
 
     skin = hsv_to_rgb(32.0, 0.45, 0.8)
     other = hsv_to_rgb(212.0, 0.45, 0.8)
-    out = run_dctl(MixerParams(vibrance=100.0), [skin, other])
+    out = run_dctl(params(vibrance=100.0), [skin, other])
     skin_gain = chroma(out[0]) / chroma(skin)
     other_gain = chroma(out[1]) / chroma(other)
     check(skin_gain < other_gain,
           "vibrance must hold back over skin hues (%.3f vs %.3f)" % (skin_gain, other_gain))
 
-    sat_out = run_dctl(MixerParams(global_saturation=100.0), [weak, strong])
+    sat_out = run_dctl(params(global_saturation=100.0), [weak, strong])
     check(chroma(out[1]) < chroma(sat_out[1]),
           "vibrance must not simply alias global saturation")
 
-    out = run_dctl(MixerParams(vibrance=-100.0), [weak, strong])
+    out = run_dctl(params(vibrance=-100.0), [weak, strong])
     check(chroma(out[0]) < chroma(weak) and chroma(out[1]) < chroma(strong),
           "negative vibrance must reduce chroma")
     check(chroma(out[1]) / chroma(strong) > chroma(out[0]) / chroma(weak),
           "negative vibrance must keep more of the strongest colours")
-    check(run_dctl(MixerParams(vibrance=100.0), neutrals) == neutrals,
+    check(run_dctl(params(vibrance=100.0), neutrals) == neutrals,
           "vibrance must not tint neutrals")
 
     # ---- protect neutrals ----------------------------------------------
     faint = hsv_to_rgb(30.0, 0.06, 0.6)
-    p_off = MixerParams(protect_neutrals=0.0)
+    p_off = params(protect_neutrals=0.0)
     p_off.set_region("orange", lum=100.0, sat=100.0)
-    p_on = MixerParams(protect_neutrals=100.0)
+    p_on = params(protect_neutrals=100.0)
     p_on.set_region("orange", lum=100.0, sat=100.0)
     moved_off = max(abs(a - b) for a, b in zip(faint, run_dctl(p_off, [faint])[0]))
     moved_on = max(abs(a - b) for a, b in zip(faint, run_dctl(p_on, [faint])[0]))
@@ -617,7 +726,7 @@ def test_global_controls():
           % (moved_on, moved_off))
 
     for protect in (0.0, 50.0, 100.0):
-        p = MixerParams(protect_neutrals=protect)
+        p = params(protect_neutrals=protect)
         p.hue = [100.0] * 8
         p.saturation = [100.0] * 8
         p.luminance = [100.0] * 8
@@ -635,7 +744,7 @@ def test_stability():
     for hue in (0.0, 100.0, -100.0):
         for sat in (0.0, 100.0, -100.0):
             for lum in (0.0, 100.0, -100.0):
-                p = MixerParams()
+                p = params()
                 p.hue = [hue] * 8
                 p.saturation = [sat] * 8
                 p.luminance = [lum] * 8
@@ -654,12 +763,12 @@ def test_stability():
 
     for value in (100.0, -100.0):
         for name in ("global_saturation", "vibrance"):
-            p = MixerParams(**{name: value})
+            p = params(**{name: value})
             out = run_dctl(p, PIXELS)
             check(finite(out), "%s = %g produced NaN or infinity" % (name, value))
 
     # saturation protection must remove negative excursions it created
-    p = MixerParams(saturation_protection=100.0, protect_neutrals=0.0)
+    p = params(saturation_protection=100.0, protect_neutrals=0.0)
     p.saturation = [100.0] * 8
     p.global_saturation = 100.0
     in_gamut = [px for px in PIXELS if min(px) >= 0.0]
@@ -675,7 +784,7 @@ def test_stability():
           "Saturation Protection = 0 should allow wider excursions than 100")
 
     # display-mode luminance must not push highlights out of the display range
-    p = MixerParams(protect_neutrals=0.0)
+    p = params(protect_neutrals=0.0)
     p.luminance = [100.0] * 8
     bright = [hsv_to_rgb(h, s, 1.0) for h in range(0, 360, 15) for s in (0.2, 0.6, 1.0)]
     out = run_dctl(p, bright)
@@ -686,12 +795,12 @@ def test_stability():
     hostile = f32px([(0.0, 0.0, 0.0), (1e-30, 0.0, 0.0), (-1e-30, 1e-30, 0.0),
                      (1e6, 1e6, 1e6), (1e-6, -1e-6, 1e-6), (1.0, 1.0, 1.0),
                      (0.0, 1e-7, 0.0), (-5.0, 5.0, 0.0)])
-    p = MixerParams(protect_neutrals=0.0, hue_falloff=0.0, preserve_luminance=100.0,
+    p = params(protect_neutrals=0.0, hue_falloff=0.0, preserve_luminance=100.0,
                     saturation_protection=100.0, global_saturation=100.0, vibrance=100.0)
     p.hue = [100.0] * 8
     p.saturation = [100.0] * 8
     p.luminance = [100.0] * 8
-    for encoding in (ENC_DISPLAY, ENC_LOG, ENC_LINEAR):
+    for encoding in (ENC_DISPLAY, ENC_LOG, ENC_LINEAR, ENC_DWG):
         p.encoding = encoding
         out = run_dctl(p, hostile)
         check(finite(out), "hostile pixels produced NaN or infinity in encoding %d" % encoding)
@@ -712,7 +821,7 @@ def test_encodings():
     check(worst < 1e-6, "DaVinci Intermediate encode/decode must round trip (%.3g)" % worst)
 
     # log-mode luminance is an exposure offset of one stop at +/-100
-    p = MixerParams(encoding=ENC_LOG, protect_neutrals=0.0)
+    p = params(encoding=ENC_LOG, protect_neutrals=0.0)
     p.set_region("blue", lum=100.0)
     src = [hsv_to_rgb(240.0, 0.5, 0.6)]        # exactly on the blue centre
     out = run_dctl(p, src)
@@ -721,7 +830,7 @@ def test_encodings():
           "log-mode Luminance +100 should offset by one stop, offset was %.6f" % offset)
 
     # linear mode: a luminance move must be a clean exposure scale
-    p = MixerParams(encoding=ENC_LINEAR, protect_neutrals=0.0, preserve_luminance=0.0)
+    p = params(encoding=ENC_LINEAR, protect_neutrals=0.0, preserve_luminance=0.0)
     p.set_region("blue", lum=100.0)
     src = [hsv_to_rgb(240.0, 0.8, 0.30)]       # exactly on the blue centre
     out = run_dctl(p, src)
@@ -734,11 +843,114 @@ def test_encodings():
 
     # hue selection in linear mode must use the perceptual hue, not the linear one
     warm_linear = f32px([(0.30, 0.12, 0.03)])[0]
-    p = MixerParams(encoding=ENC_LINEAR, protect_neutrals=0.0)
+    p = params(encoding=ENC_LINEAR, protect_neutrals=0.0)
     p.set_region("orange", sat=-100.0)
     out = run_dctl(p, [warm_linear])
     check(chroma(out[0]) < chroma(warm_linear) * 0.5,
           "a warm linear pixel must be picked up by the orange region")
+
+
+# ===========================================================================
+# 9b. DaVinci Wide Gamut mode
+# ===========================================================================
+def dctl_region_weights(encoding, pixel):
+    """The DCTL's own region weights for a pixel, read out through the mask preview."""
+    weights = []
+    for region in range(8):
+        p = params(encoding=encoding, preview=PV_MASK, preview_region=region)
+        weights.append(run_dctl(p, [pixel])[0][0])
+    return weights
+
+
+def test_davinci_wide_gamut():
+    section("DaVinci Wide Gamut mode")
+
+    # the matrix in the DCTL must invert the independently derived forward one
+    product = _matmul(list(DWG_TO_REC709), REC709_TO_DWG)
+    worst = max(abs(product[i][j] - (1.0 if i == j else 0.0))
+                for i in range(3) for j in range(3))
+    check(worst < 5e-4,
+          "the DCTL's DaVinci WG -> Rec.709 matrix must invert a matrix derived "
+          "independently from the published chromaticities (worst %.2e)" % worst)
+    for i, row in enumerate(DWG_TO_REC709):
+        check(abs(sum(row) - 1.0) < 1e-7,
+              "matrix row %d must sum to 1 so that a neutral maps to a neutral" % i)
+
+    # ---- the headline claim -------------------------------------------------
+    # A colour we know in Rec.709 terms, carried into DaVinci WG by CST IN, must
+    # still be selected by the region its Rec.709 appearance belongs to.
+    worst_corrected = 0.0
+    worst_uncorrected = 0.0
+    for name, rec709 in DWG_REFERENCE:
+        expected = region_weights(rgb_to_hue(rec709, max(rec709), chroma(rec709)), 50.0 * 0.01)
+        wire = rec709_display_to_dwg_di(rec709)
+
+        corrected = dctl_region_weights(ENC_DWG, wire)
+        uncorrected = dctl_region_weights(ENC_LOG, wire)
+
+        error = max(abs(a - b) for a, b in zip(corrected, expected))
+        worst_corrected = max(worst_corrected, error)
+        worst_uncorrected = max(worst_uncorrected,
+                                max(abs(a - b) for a, b in zip(uncorrected, expected)))
+        check(error < 0.02,
+              "%s: DaVinci WG mode should select the same regions as its Rec.709 "
+              "appearance, worst weight error %.3f" % (name, error))
+
+    print("  worst region-weight error vs the Rec.709 appearance:")
+    print("    DaVinci WG mode   %.4f" % worst_corrected)
+    print("    reading DWG raw   %.4f  (what Log direct would do)" % worst_uncorrected)
+    check(worst_uncorrected > 10.0 * worst_corrected,
+          "the correction must make a real difference; reading DaVinci WG directly was "
+          "only off by %.4f" % worst_uncorrected)
+
+    # the worst case is foliage, which is the reason the mode exists
+    foliage = rec709_display_to_dwg_di((0.259, 0.400, 0.196))
+    green_corrected = dctl_region_weights(ENC_DWG, foliage)[3]
+    green_raw = dctl_region_weights(ENC_LOG, foliage)[3]
+    check(green_corrected > 0.85 > green_raw,
+          "a green leaf must land in the Green region (corrected %.2f, raw %.2f)"
+          % (green_corrected, green_raw))
+    print("  green leaf, Green region weight: %.2f corrected, %.2f raw" %
+          (green_corrected, green_raw))
+
+    # ---- neutrals -----------------------------------------------------------
+    neutrals = f32px([(0.0, 0.0, 0.0), (0.09, 0.09, 0.09), (0.5, 0.5, 0.5),
+                      (0.95, 0.95, 0.95)])
+    p = params(encoding=ENC_DWG, protect_neutrals=0.0)
+    p.hue = [100.0] * 8
+    p.saturation = [100.0] * 8
+    p.luminance = [100.0] * 8
+    check(run_dctl(p, neutrals) == neutrals,
+          "neutrals must not move in DaVinci WG mode, at any setting")
+
+    # ---- luminance is still a one-stop code offset --------------------------
+    p = params(encoding=ENC_DWG, protect_neutrals=0.0)
+    p.set_region("blue", lum=100.0)
+    source = [rec709_display_to_dwg_di(hsv_to_rgb(240.0, 0.6, 0.5))]
+    out = run_dctl(p, source)
+    offsets = [b - a for a, b in zip(source[0], out[0])]
+    check(max(offsets) - min(offsets) < 1e-5,
+          "DaVinci WG Luminance must offset all three channels equally, got %s"
+          % ["%.5f" % o for o in offsets])
+    check(abs(offsets[0] - 0.07329248) < 2e-3,
+          "DaVinci WG Luminance +100 should be one stop, was %.6f" % offsets[0])
+
+    # ---- continuity ---------------------------------------------------------
+    p = params(encoding=ENC_DWG, protect_neutrals=0.0)
+    p.hue = [100.0, -100.0] * 4
+    p.saturation = [100.0, -100.0] * 4
+    p.luminance = [-100.0, 100.0] * 4
+    steps = []
+    for divisions in (3600, 14400):
+        ramp = [rec709_display_to_dwg_di(hsv_to_rgb(i * 360.0 / divisions, 0.9, 0.75))
+                for i in range(divisions)]
+        out = run_dctl(p, ramp)
+        check(finite(out), "DaVinci WG hue sweep produced a non-finite value")
+        steps.append(max(max(abs(a - b) for a, b in zip(x, y)) for x, y in zip(out, out[1:])))
+    check(steps[1] / max(steps[0], 1e-12) < 0.45,
+          "the DaVinci WG selection hue looks discontinuous (%.5f -> %.5f)"
+          % (steps[0], steps[1]))
+    print("  hue sweep max step %.5f -> %.5f when sampled 4x finer" % (steps[0], steps[1]))
 
 
 # ===========================================================================
@@ -747,14 +959,14 @@ def test_encodings():
 def test_preview():
     section("colour range preview")
 
-    p = MixerParams(preview=PV_MASK, preview_region=1)
+    p = params(preview=PV_MASK, preview_region=1)
     probes = [hsv_to_rgb(30.0, 0.8, 0.7), hsv_to_rgb(210.0, 0.8, 0.7)]
     out = run_dctl(p, probes)
     check(abs(out[0][0] - 1.0) < 1e-6 and out[0][0] == out[0][1] == out[0][2],
           "the mask must read 1 on the orange centre")
     check(out[1] == (0.0, 0.0, 0.0), "the mask must read 0 well outside the region")
 
-    p = MixerParams(preview=PV_ISOLATE, preview_region=5)
+    p = params(preview=PV_ISOLATE, preview_region=5)
     probes = [hsv_to_rgb(240.0, 0.8, 0.7), hsv_to_rgb(60.0, 0.8, 0.7)]
     out = run_dctl(p, probes)
     check(chroma(out[0]) > 0.3, "isolate must keep the selected region in colour")
@@ -776,6 +988,7 @@ def main():
     test_global_controls()
     test_stability()
     test_encodings()
+    test_davinci_wide_gamut()
     test_preview()
 
     print("\n" + "=" * 60)
