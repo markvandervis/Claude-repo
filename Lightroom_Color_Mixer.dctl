@@ -61,13 +61,15 @@
 //                           afterwards, so hue selection stays perceptual and
 //                           Luminance is again a true exposure change.
 //
-//  Only the transfer function is handled.  Primaries (chromaticities) are NEVER
-//  converted: hue angles are measured in whatever primaries you feed in.  With
-//  Rec.709 / P3 / DaVinci Wide Gamut the eight named regions land where you
-//  expect.  With very wide encodings such as ACES AP0 the hue angles are
-//  noticeably different; put a Colour Space Transform in front of the node (and
-//  its inverse behind it) if you want the named regions to match the standard
-//  photographic hue wheel.
+//  Pixel VALUES are never converted between primaries: every operator runs on
+//  the values you feed in, so nothing is ever clipped to a smaller gamut.  The
+//  one place primaries are accounted for is the DaVinci WG mode, which measures
+//  the hue angle used to CHOOSE the regions in Rec.709 - selection only, never
+//  the pixel.  In the other three modes hue angles are read in whatever
+//  primaries arrive: with Rec.709 or P3 the eight named regions land where you
+//  expect, with very wide encodings such as ACES AP0 they do not, and the fix
+//  there is a Colour Space Transform in front of the node and its inverse
+//  behind it.
 //
 //  Luma is measured with Rec.709 weights (0.2126 / 0.7152 / 0.0722) in the
 //  working encoding.  For other primaries this is an approximation, used only
@@ -747,8 +749,12 @@ __DEVICE__ float3 ApplyPreview(float3 rgb, float weight, int mode, int encoding)
 //  ENTRY POINT
 // ----------------------------------------------------------------------------
 
-__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
-                            float p_R, float p_G, float p_B)
+// NOTE: Resolve parses this declaration with a line-based matcher, not a C
+// parser.  It must stay on ONE line, in exactly this form.  Wrapping the
+// parameter list - which is otherwise perfectly legal C - makes Resolve report
+// "wrong argument int p_Width in Transform DCTL".  tests/run_tests.py enforces
+// this so it cannot regress.
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
 {
     float3 rgbIn = make_float3(p_R, p_G, p_B);
 

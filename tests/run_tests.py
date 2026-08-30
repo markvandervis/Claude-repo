@@ -314,15 +314,30 @@ def test_static_source():
     check("#include" not in source,
           "DCTL must be self contained (no #include) so it can be dropped into the LUT folder")
 
-    entry = re.search(r"__DEVICE__\s+float3\s+transform\s*\(\s*int\s+p_Width\s*,\s*int\s+p_Height\s*,"
-                      r"\s*int\s+p_X\s*,\s*int\s+p_Y\s*,\s*float\s+p_R\s*,\s*float\s+p_G\s*,"
-                      r"\s*float\s+p_B\s*\)", source)
-    check(entry is not None, "DCTL must declare the standard transform() entry point")
+    # Resolve matches this declaration line by line rather than parsing C, so the
+    # whole signature has to sit on one line in exactly this form.  Wrapping the
+    # parameter list is legal C but makes Resolve report
+    #   "wrong argument int p_Width in Transform DCTL"
+    # and refuse to build, so the exact single-line text is what gets checked.
+    expected_entry = ("__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, "
+                      "int p_Y, float p_R, float p_G, float p_B)")
+    check(any(line.rstrip() == expected_entry for line in source.split("\n")),
+          "the transform() entry point must appear on a single line exactly as:\n    "
+          + expected_entry)
+    check(len(re.findall(r"\btransform\s*\(", source)) == 1,
+          "'transform(' should appear exactly once, so Resolve's line-based parser "
+          "cannot latch onto the wrong occurrence")
 
     # every function definition must carry __DEVICE__
     for match in re.finditer(r"^\s*(?:static\s+)?(float|float2|float3|float4|int|void)\s+"
                              r"([A-Za-z_]\w*)\s*\([^;]*\)\s*\{", source, re.M):
         check(False, "function %s is defined without a __DEVICE__ qualifier" % match.group(2))
+
+    # same line-based parser, same hazard: a wrapped DEFINE_UI_PARAMS would not
+    # be seen either
+    for number, line in enumerate(source.split("\n"), 1):
+        if "DEFINE_UI_PARAMS" in line and not line.rstrip().endswith(")"):
+            check(False, "DEFINE_UI_PARAMS on line %d must fit on one line" % number)
 
     declared = parse_ui_params(source)
     check(len(declared) == 35, "expected 35 UI parameters, found %d" % len(declared))
