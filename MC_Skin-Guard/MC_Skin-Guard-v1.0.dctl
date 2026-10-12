@@ -1,0 +1,1042 @@
+// MarkCaptures MC Skin Guard
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
+
+// ============================================================================
+//  MC_Skin-Guard-v1.0.dctl  -  MC Skin Guard
+//  ---------------------------------------------------------------------------
+//  A skin tone tool for DaVinci Resolve Studio.  It selects skin with a soft
+//  hue / saturation / luma qualifier around the skin tone line and then:
+//
+//    * consolidates skin hues towards the skin tone line (blotchy red and
+//      green / yellow casts),
+//    * protects skin after a look or LUT by pulling it back towards a natural
+//      skin hue and saturation while the rest of the look is left alone,
+//    * applies skin-only Saturation, Density and Exposure,
+//    * evens out colour differences within the skin (colour only, the
+//      luminance detail is never touched - this is not a beauty filter).
+//
+//  Version : 1.0
+//  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
+//            You may use this file for personal and commercial grading work.
+//            You may not redistribute, share, sell, sublicense or publish this
+//            file or any modified version of it, in whole or in part.
+//
+//  ---------------------------------------------------------------------------
+//  COLOUR-SPACE ASSUMPTIONS
+//  ---------------------------------------------------------------------------
+//  The Input Encoding system is the one used by the MC HSL Editor.  Skin is
+//  SELECTED by its hue, saturation and luma in the Rec.709 display encoding,
+//  which is where "skin sits on the skin tone line at about 27 degrees" is
+//  true.  Pixel values are never clipped and never reduced to a smaller gamut:
+//  the node hands back the encoding and gamut it was given.
+//
+//    Display Rec.709 sRGB : display-referred input.  Selection and processing
+//                           both run directly on it.
+//    Log direct           : any log encoding.  Selection and processing run on
+//                           the log code values (saturation reads lower than
+//                           in a display encoding - widen Skin Sat Low).
+//    Scene Linear         : Rec.709 scene-linear.  Selected in the sRGB
+//                           encoding; exposure in linear light.
+//    DaVinci WG Intermediate (default)
+//                         : selected after carrying the pixel into Rec.709;
+//                           exposure as a DaVinci Intermediate offset.
+//    ACES AP1 ACEScct     : selected in Rec.709; exposure as an ACEScct offset.
+//    Cineon Log           : selected after decoding to Rec.709 display;
+//                           exposure as a Cineon offset.
+//
+//  In the last four modes hue and saturation are also CHANGED in that Rec.709
+//  encoding, through an exact round trip (decode, primaries matrix, a transfer
+//  function that is continued below zero instead of clipped, and the exact
+//  inverses back).  Colours outside Rec.709 survive the trip, what the
+//  qualifier measures is exactly what the operators move, and "pull 10
+//  degrees towards the skin line" really is 10 degrees on the Rec.709
+//  vectorscope.  Exposure and Density are applied to the working values,
+//  where they are true exposure changes.
+//
+//  ---------------------------------------------------------------------------
+//  STRUCTURE  (for the later OFX port)
+//  ---------------------------------------------------------------------------
+//  The file is in four layers.  Only the last one knows about Resolve:
+//    1. helpers and encodings         - pure scalar maths
+//    2. qualifier                      - SgHueWindow, SgSatWindow, ...
+//    3. operators and SgSkinGuardPixel - the whole per-pixel colour pipeline,
+//                                        driven by plain arguments, no UI
+//    4. image access and transform()   - texture reads, UI -> arguments
+//  An OFX port reuses layers 1-3 unchanged and replaces layer 4.
+//
+//  ---------------------------------------------------------------------------
+//  FOLD SAFETY
+//  ---------------------------------------------------------------------------
+//  Every mask is a product of C1 smoothstep ramps; there is no hard threshold
+//  on colour anywhere.  A soft mask alone is not enough, though: an operator
+//  that changes the very quantity the mask is built from (saturation changed
+//  by a saturation mask, luma by a luma mask) can reverse a gradient at the
+//  mask edge.  Each such edge is therefore widened automatically to the width
+//  that keeps the mapping monotonic for the current slider values, and the
+//  hue pulls are bounded so that hue order is always preserved.  The details
+//  are at SgFoldSafeSatFeather, SgFoldSafeLumaFeather, SgToneGuard and
+//  SgPullHue.  Gamut and display-range limits act on the size of a move only
+//  (SgLimitChromaGain, SgApplyEvenness), never on its direction.
+//
+//  With every effect control at zero the input is returned bit exact.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+//  UI
+//  Resolve lists sliders first, then check boxes, then combo boxes; the order
+//  of declaration only matters within each type.
+// ----------------------------------------------------------------------------
+
+// --- Global -----------------------------------------------------------------
+DEFINE_UI_PARAMS(uiAmount, Overall Amount, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiAmount, "Mix between the original image (0) and the full Skin Guard result (100).")
+
+// --- Skin qualifier ---------------------------------------------------------
+DEFINE_UI_PARAMS(uiHueCentre, Skin Hue Centre, DCTLUI_SLIDER_FLOAT, 27.0, 0.0, 60.0, 0.5)
+DEFINE_UI_TOOLTIP(uiHueCentre, "Hue of the skin tone line in degrees (Rec.709 HSV). 27 matches the skin tone indicator on Resolve's vectorscope. Hue Consolidate and Protect Skin pull towards this hue.")
+DEFINE_UI_PARAMS(uiHueWidth, Skin Hue Width, DCTLUI_SLIDER_FLOAT, 30.0, 4.0, 120.0, 1.0)
+DEFINE_UI_TOOLTIP(uiHueWidth, "Width in degrees of the fully selected hue range around Skin Hue Centre. Qualifier Softness adds a soft fade outside it.")
+DEFINE_UI_PARAMS(uiSatLow, Skin Sat Low, DCTLUI_SLIDER_FLOAT, 10.0, 0.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiSatLow, "Saturation (percent) from which skin is fully selected. Less saturated colours fade out. Exact greys are never selected.")
+DEFINE_UI_PARAMS(uiSatHigh, Skin Sat High, DCTLUI_SLIDER_FLOAT, 75.0, 0.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiSatHigh, "Saturation (percent) up to which skin is fully selected. More saturated colours fade out.")
+DEFINE_UI_PARAMS(uiLumaLow, Skin Luma Low, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiLumaLow, "Luma (percent) from which skin is fully selected. Darker pixels fade out.")
+DEFINE_UI_PARAMS(uiLumaHigh, Skin Luma High, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiLumaHigh, "Luma (percent) up to which skin is fully selected. Brighter pixels fade out.")
+DEFINE_UI_PARAMS(uiSoftness, Qualifier Softness, DCTLUI_SLIDER_FLOAT, 50.0, 0.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiSoftness, "Width of the soft fade at every edge of the skin selection. Edges also widen automatically when needed to keep gradients smooth.")
+
+// --- Hue consolidate --------------------------------------------------------
+DEFINE_UI_PARAMS(uiConsolidate, Hue Consolidate, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiConsolidate, "Pulls every skin hue towards the skin tone line, on both sides. Evens out blotchy red patches and green / yellow casts.")
+DEFINE_UI_PARAMS(uiRedness, Redness, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiRedness, "Adds to (or takes away from) Hue Consolidate on the red / magenta side of the skin tone line only. Use it alone to remove redness.")
+DEFINE_UI_PARAMS(uiYellowGreen, Yellow Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiYellowGreen, "Adds to (or takes away from) Hue Consolidate on the yellow / green side of the skin tone line only. Use it alone to remove sallow or green casts.")
+
+// --- Protect skin -----------------------------------------------------------
+DEFINE_UI_PARAMS(uiProtect, Protect Skin, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiProtect, "For a node AFTER your look or LUT. Pulls skin back towards the skin tone line and towards Natural Saturation, so the look stays on everything else.")
+DEFINE_UI_PARAMS(uiProtectWidth, Protect Width, DCTLUI_SLIDER_FLOAT, 40.0, 0.0, 90.0, 1.0)
+DEFINE_UI_TOOLTIP(uiProtectWidth, "Extra hue width (degrees) for Protect Skin, because a look may have pushed skin away from its usual hue. Added to Skin Hue Width.")
+DEFINE_UI_PARAMS(uiNaturalSat, Natural Saturation, DCTLUI_SLIDER_FLOAT, 35.0, 5.0, 90.0, 1.0)
+DEFINE_UI_TOOLTIP(uiNaturalSat, "Skin saturation (percent) that Protect Skin restores. Kept between Skin Sat Low and Skin Sat High.")
+
+// --- Skin tone --------------------------------------------------------------
+DEFINE_UI_PARAMS(uiSkinSat, Skin Saturation, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiSkinSat, "Saturation of skin only. -100 halves skin chroma, +100 raises it by half. Luma is kept.")
+DEFINE_UI_PARAMS(uiDensity, Skin Density, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiDensity, "Film-like density: the more saturated a skin pixel is, the darker it gets. Negative values lighten saturated skin instead.")
+DEFINE_UI_PARAMS(uiExposure, Skin Exposure, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiExposure, "Exposure of skin only, +/- one stop at +/-100. Hue and saturation are kept.")
+
+// --- Evenness ---------------------------------------------------------------
+DEFINE_UI_PARAMS(uiEvenness, Evenness, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 1.0)
+DEFINE_UI_TOOLTIP(uiEvenness, "Smooths colour differences within the skin towards the local average colour. Colour only: luminance detail and texture are kept exactly. Not a beauty filter.")
+DEFINE_UI_PARAMS(uiEvenRadius, Evenness Radius, DCTLUI_SLIDER_FLOAT, 8.0, 1.0, 32.0, 1.0)
+DEFINE_UI_TOOLTIP(uiEvenRadius, "Size in pixels (at 1920 wide; scales with resolution) of the area Evenness averages colour over. Larger evens out bigger blotches.")
+
+// --- Check boxes ------------------------------------------------------------
+DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
+
+// --- Combo boxes ------------------------------------------------------------
+DEFINE_UI_PARAMS(uiEncoding, Input Encoding, DCTLUI_COMBO_BOX, 3, {ENC_DISPLAY, ENC_LOG, ENC_LINEAR, ENC_DWG, ENC_ACESCCT, ENC_CINEON}, {Display Rec.709 sRGB, Log direct, Scene Linear, DaVinci WG Intermediate, ACES AP1 ACEScct, Cineon Log})
+DEFINE_UI_TOOLTIP(uiEncoding, "What this node receives. In a DaVinci Wide Gamut colour managed project choose DaVinci WG Intermediate.")
+DEFINE_UI_PARAMS(uiShowMask, Show Skin Mask, DCTLUI_COMBO_BOX, 0, {SM_OFF, SM_MASK, SM_ISOLATE}, {Off, Mask, Isolate})
+DEFINE_UI_TOOLTIP(uiShowMask, "Mask shows the skin selection in white. Isolate keeps skin in colour and shows everything else as dim grey.")
+
+
+// ----------------------------------------------------------------------------
+//  CONSTANTS
+// ----------------------------------------------------------------------------
+
+// Small epsilon used to keep divisions finite.
+#define SG_EPS                  1.0e-6f
+
+// Largest fraction of its distance to the skin tone line a hue can be pulled.
+// Below 1 the hue mapping stays strictly increasing, so hue order (and with it
+// every gradient through the skin range) is always preserved.
+#define SG_PULL_MAX             0.9f
+
+// Strength of the saturation pull of Protect Skin at 100: the pulled
+// saturation is Natural^p * sat^(1 - p), so p < 1 keeps saturation order.
+#define SG_PROTECT_SAT_MAX      0.85f
+#define SG_PROTECT_GAIN_MIN     0.25f
+#define SG_PROTECT_GAIN_MAX     4.0f
+
+// Skin Saturation chroma gain at +/-100 is 1 +/- this.
+#define SG_SKIN_SAT_RANGE       0.5f
+
+// Stops at +/-100 for Skin Exposure, and per unit of saturation for Density.
+#define SG_EXPOSURE_STOPS       1.0f
+#define SG_DENSITY_STOPS        1.0f
+
+// Neutral guard: the mask is exactly zero below SG_NEUTRAL_START saturation
+// and fades in over SG_NEUTRAL_WIDTH.  The dead zone is what makes "greys are
+// never touched" exact, including greys carried through a primaries matrix,
+// which are neutral only to within float rounding.
+#define SG_NEUTRAL_START        0.005f
+#define SG_NEUTRAL_WIDTH        0.03f
+
+// Saturation below which chroma readings become numerically noisy.
+#define SG_DARK_CHROMA          0.02f
+
+// Qualifier feathers.  Hue in degrees, saturation in natural-log units (the
+// saturation edges are proportional, so they behave the same for pale and for
+// deep skin), luma in code values.  Each fade is twice the feather wide.
+#define SG_HUE_FEATHER_MIN      1.0f
+#define SG_HUE_FEATHER_SOFT     12.0f
+#define SG_SAT_FEATHER_MIN      0.15f
+#define SG_SAT_FEATHER_SOFT     0.5f
+#define SG_LUMA_FEATHER_MIN     0.01f
+#define SG_LUMA_FEATHER_SOFT    0.10f
+
+// Fold-safe feather factors, see SgFoldSafeSatFeather / SgFoldSafeLumaFeather.
+#define SG_FOLD_SAT_K           2.0f
+#define SG_FOLD_LUMA_K          0.3f
+#define SG_FOLD_LOG_TONE        0.2f
+
+// Evenness.  Two rings of eight taps; the ring radii are fractions of the
+// Evenness Radius and the weights a Gaussian with sigma 0.7 * radius.  The
+// colour and luma tolerances stop the average from reaching across into
+// lips, eyes, hair or background.
+#define SG_EVEN_REF_WIDTH       1920.0f
+#define SG_EVEN_RING_INNER      0.5f
+#define SG_EVEN_RING_OUTER      1.0f
+#define SG_EVEN_W_INNER         0.7748f
+#define SG_EVEN_W_OUTER         0.3604f
+#define SG_EVEN_SIGMA_C_DISPLAY 0.08f
+#define SG_EVEN_SIGMA_L_DISPLAY 0.15f
+#define SG_EVEN_SIGMA_C_LOG     0.04f
+#define SG_EVEN_SIGMA_L_LOG     0.08f
+
+// Rec.709 luma weights, used purely as a lightness metric.
+#define SG_LUMA_R               0.2126f
+#define SG_LUMA_G               0.7152f
+#define SG_LUMA_B               0.0722f
+
+// One photographic stop as a DaVinci Intermediate / generic log offset.
+#define SG_LOG_STOP             0.07329248f
+
+// sRGB / Rec.709 opto-electronic transfer function.
+#define SG_SRGB_CUT             0.0031308f
+#define SG_SRGB_SLOPE           12.92f
+#define SG_SRGB_A               1.055f
+#define SG_SRGB_B               0.055f
+#define SG_SRGB_GAMMA           (1.0f / 2.4f)
+
+// DaVinci Intermediate transfer-function constants (published by Blackmagic).
+#define SG_DI_A                 0.0075f
+#define SG_DI_B                 7.0f
+#define SG_DI_C                 0.07329248f
+#define SG_DI_M                 10.44426855f
+#define SG_DI_LIN_CUT           0.00262409f
+#define SG_DI_LOG_CUT           0.02740668f
+
+// ACEScct (S-2016-001).
+#define SG_CCT_LOG_STOP         (1.0f / 17.52f)
+#define SG_CCT_CUT              0.155251141552511f
+#define SG_CCT_TOE_A            0.0729055341958355f
+#define SG_CCT_TOE_B            10.5402377416545f
+#define SG_CCT_LIN_CUT          0.0078125f
+
+// Cineon: 0.002 density per code value, negative gamma 0.6, white 685 / black
+// 95 of 1023.  One stop is log10(2) * 0.6 / 0.002 = 90.3 code values.
+#define SG_CIN_WHITE            (685.0f / 1023.0f)
+#define SG_CIN_SCALE            (1023.0f / 300.0f)
+#define SG_CIN_BLACK_OFF        0.0107977516f
+#define SG_CIN_LOG_STOP         0.0882785911f
+#define SG_CIN_BLACK            (95.0f / 1023.0f)
+// d(linear)/d(code) at black: ln(10) * scale * black_off / (1 - black_off)
+#define SG_CIN_TOE_SLOPE        0.0857073970f
+#define SG_LOG10_2              0.30102999566f
+
+
+
+// ----------------------------------------------------------------------------
+//  1. SMALL VECTOR / SCALAR HELPERS
+//  Component-wise helpers are used instead of operator overloads for float3,
+//  so the file behaves identically on every DCTL backend.
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float SgLerp(float a, float b, float t)
+{
+    return a + (b - a) * t;
+}
+
+// Hermite smoothstep on [0,1], clamped.  C1 continuous at both ends.
+__DEVICE__ float SgSmoothStep01(float x)
+{
+    float t = _saturatef(x);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+__DEVICE__ float3 SgScale3(float3 v, float s)
+{
+    return make_float3(v.x * s, v.y * s, v.z * s);
+}
+
+__DEVICE__ float3 SgOffset3(float3 v, float s)
+{
+    return make_float3(v.x + s, v.y + s, v.z + s);
+}
+
+__DEVICE__ float3 SgLerp3(float3 a, float3 b, float t)
+{
+    return make_float3(SgLerp(a.x, b.x, t), SgLerp(a.y, b.y, t), SgLerp(a.z, b.z, t));
+}
+
+__DEVICE__ float SgMax3(float3 v)
+{
+    return _fmaxf(v.x, _fmaxf(v.y, v.z));
+}
+
+__DEVICE__ float SgMin3(float3 v)
+{
+    return _fminf(v.x, _fminf(v.y, v.z));
+}
+
+// Lightness metric.  Rec.709 weights applied in the working encoding.
+__DEVICE__ float SgLuma(float3 v)
+{
+    return v.x * SG_LUMA_R + v.y * SG_LUMA_G + v.z * SG_LUMA_B;
+}
+
+// Wrap an arbitrary angle into [0,360).
+__DEVICE__ float SgWrapHue(float h)
+{
+    float w = _fmod(h, 360.0f);
+    if (w < 0.0f) w += 360.0f;
+    return w;
+}
+
+// Shortest signed angular distance from b to a, in [-180,180].
+__DEVICE__ float SgHueDelta(float a, float b)
+{
+    return _fmod(a - b + 540.0f, 360.0f) - 180.0f;
+}
+
+
+// ----------------------------------------------------------------------------
+//  ENCODINGS
+//  Only transfer functions are applied to pixel values; primaries are only
+//  ever converted for the selection measurement.
+// ----------------------------------------------------------------------------
+
+// Scene linear -> DaVinci Intermediate.  The linear toe keeps negative scene
+// values finite and monotonic.
+__DEVICE__ float SgDiEncode(float x)
+{
+    if (x > SG_DI_LIN_CUT) return (_log2f(x + SG_DI_A) + SG_DI_B) * SG_DI_C;
+    return x * SG_DI_M;
+}
+
+__DEVICE__ float SgDiDecode(float y)
+{
+    // The exponent is limited so that a wildly out of range pixel cannot
+    // decode to infinity.
+    if (y > SG_DI_LOG_CUT) return _exp2f(_fminf(y, 5.0f) / SG_DI_C - SG_DI_B) - SG_DI_A;
+    return y / SG_DI_M;
+}
+
+__DEVICE__ float SgAcescctDecode(float y)
+{
+    if (y > SG_CCT_CUT) return _exp2f(_fminf(y, 4.0f) * 17.52f - 9.72f);
+    return (y - SG_CCT_TOE_A) / SG_CCT_TOE_B;
+}
+
+__DEVICE__ float SgAcescctEncode(float x)
+{
+    if (x <= SG_CCT_LIN_CUT) return SG_CCT_TOE_B * x + SG_CCT_TOE_A;
+    return (_log2f(x) + 9.72f) / 17.52f;
+}
+
+// Below code value 95 (linear 0) the Cineon curve is continued by its tangent,
+// so that encode and decode are an exact pair for slightly negative linear
+// values too.  Above black this is the standard Cineon decode.
+__DEVICE__ float SgCineonDecode(float y)
+{
+    if (y < SG_CIN_BLACK) return (y - SG_CIN_BLACK) * SG_CIN_TOE_SLOPE;
+    float v = _powf(10.0f, _fminf(y - SG_CIN_WHITE, 3.0f) * SG_CIN_SCALE);
+    return (v - SG_CIN_BLACK_OFF) / (1.0f - SG_CIN_BLACK_OFF);
+}
+
+__DEVICE__ float SgCineonEncode(float x)
+{
+    if (x < 0.0f) return SG_CIN_BLACK + x / SG_CIN_TOE_SLOPE;
+    float v = x * (1.0f - SG_CIN_BLACK_OFF) + SG_CIN_BLACK_OFF;
+    return _log2f(v) * SG_LOG10_2 / SG_CIN_SCALE + SG_CIN_WHITE;
+}
+
+// Rec.709 / sRGB OETF of the selection encoding.  Unlike the
+// MC HSL Editor, values below zero are not held at zero but continue along the
+// linear toe: a colour outside Rec.709 then still has a well defined hue that
+// moves smoothly when the colour does, and the encoding has an exact inverse
+// (SgSrgbDecode), which the round trip of the hue and saturation operators and
+// the fold safety of the hue pulls rely on.  For in-gamut colours it is identical.
+__DEVICE__ float SgSrgbEncode(float x)
+{
+    if (x <= SG_SRGB_CUT)   return x * SG_SRGB_SLOPE;
+    return SG_SRGB_A * _powf(x, SG_SRGB_GAMMA) - SG_SRGB_B;
+}
+
+__DEVICE__ float SgSrgbDecode(float y)
+{
+    if (y <= SG_SRGB_CUT * SG_SRGB_SLOPE) return y / SG_SRGB_SLOPE;
+    return _powf((y + SG_SRGB_B) / SG_SRGB_A, 1.0f / SG_SRGB_GAMMA);
+}
+
+// Exposure of one stop as a code-value offset in each log working domain.
+__DEVICE__ float SgLogStop(int encoding)
+{
+    if (encoding == ENC_ACESCCT) return SG_CCT_LOG_STOP;
+    if (encoding == ENC_CINEON)  return SG_CIN_LOG_STOP;
+    return SG_LOG_STOP;
+}
+
+__DEVICE__ float3 RGBToWorkingSpace(float3 rgb, int encoding)
+{
+    if (encoding == ENC_LINEAR)
+        return make_float3(SgDiEncode(rgb.x), SgDiEncode(rgb.y), SgDiEncode(rgb.z));
+    return rgb;
+}
+
+__DEVICE__ float3 WorkingSpaceToRGB(float3 rgb, int encoding)
+{
+    if (encoding == ENC_LINEAR)
+        return make_float3(SgDiDecode(rgb.x), SgDiDecode(rgb.y), SgDiDecode(rgb.z));
+    return rgb;
+}
+
+// True when skin is selected in a different encoding from the working one.
+__DEVICE__ int SgSelectsElsewhere(int encoding)
+{
+    return (encoding == ENC_DISPLAY || encoding == ENC_LOG) ? 0 : 1;
+}
+
+// The working values carried into the encoding skin is SELECTED in.  Hue and
+// saturation are also CHANGED in this encoding (through the exact round trip
+// SgSelectionToWorking), so what the qualifier and the hue pulls measure is
+// exactly what they move; exposure is changed in the working encoding.
+//
+//   Display, Log direct : the working values themselves.
+//   Scene Linear        : sRGB encoding of the linear values (Rec.709).
+//   DaVinci WG          : DI decode, DaVinci WG -> Rec.709, sRGB encode.
+//   ACEScct             : ACEScct decode, AP1 -> Rec.709, sRGB encode.
+//   Cineon              : Cineon decode, sRGB encode (Rec.709 primaries).
+//
+// The matrices are the ones used by the MC HSL Editor, with each row
+// normalised to sum to exactly 1 so that a neutral stays a neutral.
+__DEVICE__ float3 SgSelectionRGB(float3 w, int encoding)
+{
+    if (encoding == ENC_LINEAR)
+    {
+        return make_float3(SgSrgbEncode(SgDiDecode(w.x)),
+                           SgSrgbEncode(SgDiDecode(w.y)),
+                           SgSrgbEncode(SgDiDecode(w.z)));
+    }
+    if (encoding == ENC_DWG)
+    {
+        float r = SgDiDecode(w.x);
+        float g = SgDiDecode(w.y);
+        float b = SgDiDecode(w.z);
+        return make_float3(
+            SgSrgbEncode( 1.89871504f * r + -0.79180471f * g + -0.10691033f * b),
+            SgSrgbEncode(-0.16894835f * r +  1.48839859f * g + -0.31945024f * b),
+            SgSrgbEncode(-0.12152602f * r + -0.31546761f * g +  1.43699363f * b));
+    }
+    if (encoding == ENC_ACESCCT)
+    {
+        float r = SgAcescctDecode(w.x);
+        float g = SgAcescctDecode(w.y);
+        float b = SgAcescctDecode(w.z);
+        return make_float3(
+            SgSrgbEncode( 1.70505099f * r + -0.62179212f * g + -0.08325887f * b),
+            SgSrgbEncode(-0.13025642f * r +  1.14080474f * g + -0.01054832f * b),
+            SgSrgbEncode(-0.02400336f * r + -0.12896898f * g +  1.15297233f * b));
+    }
+    if (encoding == ENC_CINEON)
+    {
+        return make_float3(SgSrgbEncode(SgCineonDecode(w.x)),
+                           SgSrgbEncode(SgCineonDecode(w.y)),
+                           SgSrgbEncode(SgCineonDecode(w.z)));
+    }
+    return w;
+}
+
+// Exact inverse of SgSelectionRGB: selection encoding -> working values.  The
+// inverse matrices are the exact inverses of the ones above (their rows sum to
+// 1 as well), and every transfer function used has an exact inverse over the
+// whole real line, so the round trip loses nothing and clips nothing.
+__DEVICE__ float3 SgSelectionToWorking(float3 s, int encoding)
+{
+    float r = SgSrgbDecode(s.x);
+    float g = SgSrgbDecode(s.y);
+    float b = SgSrgbDecode(s.z);
+
+    if (encoding == ENC_LINEAR)
+        return make_float3(SgDiEncode(r), SgDiEncode(g), SgDiEncode(b));
+    if (encoding == ENC_DWG)
+    {
+        return make_float3(
+            SgDiEncode(0.56273797f * r + 0.32348330f * g + 0.11377874f * b),
+            SgDiEncode(0.07775428f * r + 0.74978114f * g + 0.17246458f * b),
+            SgDiEncode(0.06466018f * r + 0.19195861f * g + 0.74338121f * b));
+    }
+    if (encoding == ENC_ACESCCT)
+    {
+        return make_float3(
+            SgAcescctEncode(0.61309740f * r + 0.33952315f * g + 0.04737945f * b),
+            SgAcescctEncode(0.07019372f * r + 0.91635388f * g + 0.01345240f * b),
+            SgAcescctEncode(0.02061560f * r + 0.10956978f * g + 0.86981462f * b));
+    }
+    if (encoding == ENC_CINEON)
+        return make_float3(SgCineonEncode(r), SgCineonEncode(g), SgCineonEncode(b));
+    return s;
+}
+
+
+// ----------------------------------------------------------------------------
+//  HUE GEOMETRY
+// ----------------------------------------------------------------------------
+
+// Standard HSV hue angle in degrees; 0 for neutral pixels, where every
+// operator that consumes hue is a no-op anyway.
+__DEVICE__ float RGBToHue(float3 c, float mx, float chroma)
+{
+    if (chroma <= SG_EPS) return 0.0f;
+
+    float h;
+    if (mx == c.x)      h = (c.y - c.z) / chroma;
+    else if (mx == c.y) h = 2.0f + (c.z - c.x) / chroma;
+    else                h = 4.0f + (c.x - c.y) / chroma;
+
+    return SgWrapHue(h * 60.0f);
+}
+
+// HSV saturation damped for very dark pixels, where chroma / max would report
+// sensor noise as a strongly saturated colour.  Used by the qualifier.
+__DEVICE__ float SgPerceptualSaturation(float mx, float chroma)
+{
+    if (mx <= SG_EPS) return 0.0f;
+    return _fminf(chroma / mx, chroma / SG_DARK_CHROMA);
+}
+
+// One channel of the branchless HSV reconstruction (n = 5 red, 3 green,
+// 1 blue).  Keeps HSV value and saturation; only the hue angle moves.
+__DEVICE__ float SgHueChannel(float n, float hueDeg, float mx, float chroma)
+{
+    float k = _fmod(n + hueDeg * (1.0f / 60.0f), 6.0f);
+    return mx - chroma * _clampf(_fminf(k, 4.0f - k), 0.0f, 1.0f);
+}
+
+__DEVICE__ float3 ApplyHue(float hueDeg, float mx, float chroma)
+{
+    return make_float3(SgHueChannel(5.0f, hueDeg, mx, chroma),
+                       SgHueChannel(3.0f, hueDeg, mx, chroma),
+                       SgHueChannel(1.0f, hueDeg, mx, chroma));
+}
+
+// Selection measurement: (hue, perceptual saturation, luma) in the selection
+// encoding, packed in a float3 so the file compiles unchanged on CUDA, OpenCL
+// and Metal.
+__DEVICE__ float3 SgMeasure(float3 w, int encoding)
+{
+    float3 s     = SgSelectionRGB(w, encoding);
+    float mx     = SgMax3(s);
+    float chroma = mx - SgMin3(s);
+    return make_float3(RGBToHue(s, mx, chroma), SgPerceptualSaturation(mx, chroma), SgLuma(s));
+}
+
+
+// ----------------------------------------------------------------------------
+//  2. QUALIFIER
+//  Every edge is a C1 smoothstep, so the mask has no threshold anywhere.
+// ----------------------------------------------------------------------------
+
+// Hue window around the skin tone line: 1 for |d| <= halfWidth, fading to 0 at
+// |d| = halfWidth + 2 * feather.  d is the signed distance to the centre.
+__DEVICE__ float SgHueWindow(float d, float halfWidth, float feather)
+{
+    return 1.0f - SgSmoothStep01((_fabs(d) - halfWidth) / (2.0f * feather));
+}
+
+// Saturation band in log-saturation: 1 between lo and hi, fading to 0 over a
+// factor of exp(2 * feather) below lo and above hi.
+__DEVICE__ float SgSatWindow(float sat, float lo, float hi, float feather)
+{
+    float u   = _logf(_fmaxf(sat, 1.0e-4f));
+    float uLo = _logf(_fmaxf(lo, 1.0e-4f));
+    float uHi = _logf(_fmaxf(hi, 1.0e-4f));
+    float rise = SgSmoothStep01((u - (uLo - 2.0f * feather)) / (2.0f * feather));
+    float fall = 1.0f - SgSmoothStep01((u - uHi) / (2.0f * feather));
+    return rise * fall;
+}
+
+// Luma band: 1 between lo and hi, fading to 0 over 2 * feather outside it.
+__DEVICE__ float SgLumaWindow(float l, float lo, float hi, float feather)
+{
+    float rise = SgSmoothStep01((l - (lo - 2.0f * feather)) / (2.0f * feather));
+    float fall = 1.0f - SgSmoothStep01((l - hi) / (2.0f * feather));
+    return rise * fall;
+}
+
+// Exactly 0 for greys, 1 once a colour is clearly a colour.
+__DEVICE__ float SgNeutralGuard(float sat)
+{
+    return SgSmoothStep01((sat - SG_NEUTRAL_START) / SG_NEUTRAL_WIDTH);
+}
+
+// A chroma gain g applied through a saturation mask maps sat -> sat * (1 +
+// m(sat) * (g - 1)).  Written in u = ln(sat) that mapping stays increasing as
+// long as the mask's log-slope satisfies |dm/du| * |g - 1| <= 1 + m * (g - 1)
+// along the edge that works against the gain.  For a smoothstep edge of width
+// 2F the slope peaks at 0.75 / F, which leads to F >= 1.5 |g - 1| / (1 + g);
+// SG_FOLD_SAT_K = 2 keeps a margin over that.
+__DEVICE__ float SgFoldSafeSatFeather(float feather, float gain)
+{
+    return _fmaxf(feather, SG_FOLD_SAT_K * _fabs(gain - 1.0f) / (1.0f + gain));
+}
+
+// The same for the luma edges and a tone move of up to `stops`.  In every
+// selection encoding one stop moves luma by at most about 0.34 of its value,
+// so an edge of half-width 0.3 * stops keeps the luma mapping increasing.
+__DEVICE__ float SgFoldSafeLumaFeather(float feather, float stops)
+{
+    return _fmaxf(feather, SG_FOLD_LUMA_K * _fabs(stops));
+}
+
+// Log direct only.  A log encoding moves every code value by the same amount
+// per stop, right down to black, while the qualifier's saturation reading is
+// damped towards black (SG_DARK_CHROMA).  Together they would let Exposure
+// and Density reverse a deep-shadow gradient.  The tone moves are therefore
+// faded in from black over a code-value range proportional to their size,
+// which bounds the slope of the move below 1.  The other encodings need no
+// such fade: their selection luma moves in proportion to itself per stop.
+__DEVICE__ float SgToneGuard(float luma, float stops, int encoding)
+{
+    if (encoding != ENC_LOG || stops == 0.0f) return 1.0f;
+    return SgSmoothStep01(luma / (SG_FOLD_LOG_TONE * _fabs(stops)));
+}
+
+// ----------------------------------------------------------------------------
+//  3. OPERATORS
+// ----------------------------------------------------------------------------
+
+// Chroma scaling about the pixel's own luma: luma preserving, hue preserving.
+__DEVICE__ float3 SgScaleChroma(float3 c, float gain)
+{
+    if (gain == 1.0f) return c;
+    float y = SgLuma(c);
+    return make_float3(y + (c.x - y) * gain,
+                       y + (c.y - y) * gain,
+                       y + (c.z - y) * gain);
+}
+
+// Soft gamut limit for a chroma gain above 1, applied to the gain itself.
+// It works in the encoding the gain is applied in (the selection encoding).
+//
+// Raising chroma about a luminance y moves the smallest channel down towards
+// zero and, in the display domain, the largest one up towards white.  gMax is
+// the gain at which the first of them would arrive there (or would pass the
+// pixel's own value, if it was already beyond).  The gain is passed through
+// unchanged up to a knee at 80 % of gMax and above it is compressed
+// exponentially towards gMax, which it approaches but never reaches: C1 at
+// the knee, increasing, and in-gamut colours stay in gamut.  Because only the
+// size of the gain changes, never its direction, the limit cannot move hue.
+// Gains at or below 1 move every channel towards y and pass unchanged.
+__DEVICE__ float SgLimitChromaGain(float3 c, float y, float gain, int limitWhite)
+{
+    if (gain <= 1.0f) return gain;
+
+    float gMax = 1.0e30f;
+    float mn = SgMin3(c);
+    if (y - mn > SG_EPS && y > _fminf(mn, 0.0f))
+        gMax = (y - _fminf(mn, 0.0f)) / (y - mn);
+    float mx = SgMax3(c);
+    if (limitWhite && mx - y > SG_EPS)
+        gMax = _fminf(gMax, (_fmaxf(mx, 1.0f) - y) / (mx - y));
+
+    float knee = _fmaxf(1.0f, 0.8f * gMax);
+    if (gain <= knee) return gain;
+    float range = _fmaxf(gMax - knee, SG_EPS);
+    return knee + range * (1.0f - _expf(-(gain - knee) / range));
+}
+
+// Restores the luma a hue rotation moved.  In Log direct (whose values are
+// both the working and the selection encoding) an offset, which is an
+// exposure change; in a display-like encoding - the display mode and the
+// Rec.709 selection encoding of the other modes - a gain, which keeps HSV
+// saturation, and which is kept from lifting the pixel's max past white (or
+// past its own max, if that was already above white).
+__DEVICE__ float3 SgPreserveLuminance(float3 c, float lumaBefore, int encoding)
+{
+    float lumaAfter = SgLuma(c);
+    if (encoding == ENC_LOG) return SgOffset3(c, lumaBefore - lumaAfter);
+    if (lumaBefore <= SG_EPS || lumaAfter <= SG_EPS) return c;
+    float mx   = SgMax3(c);
+    float gain = _clampf(lumaBefore / lumaAfter, 0.25f, 4.0f);
+    if (mx > SG_EPS) gain = _fminf(gain, _fmaxf(1.0f, mx) / mx);
+    return SgScale3(c, gain);
+}
+
+// One hue pull towards the skin tone line.  d is the signed distance to the
+// line; the result is d * (1 - k(d) * m(d)), with k the side-dependent
+// strength (red side for d < 0, yellow / green side for d > 0) and m the hue
+// window times the saturation / luma mask.
+//
+// Fold safety: the derivative is 1 - k * (m + d * m').  The window decreases
+// away from the line, so d * m' <= 0 on both sides and m + d * m' <= m <= 1.
+// With k <= SG_PULL_MAX < 1 the derivative is therefore always positive: hues
+// keep their order and no gradient can fold, whatever the window looks like.
+// At d = 0 both sides give 0, so the map is continuous across the line.
+__DEVICE__ float SgPullHue(float d, float kRed, float kYellow, float maskSL,
+                           float halfWidth, float feather)
+{
+    float k = (d < 0.0f) ? kRed : kYellow;
+    return d * (1.0f - k * maskSL * SgHueWindow(d, halfWidth, feather));
+}
+
+// Exposure in the working domain.  Log domains: a code-value offset.  Linear:
+// decode, scale, re-encode.  Display: a Moebius tone response on the pixel's
+// max that fixes black and white, applied as one gain so hue and saturation
+// are kept (the same curve as the MC HSL Editor's display Luminance).
+__DEVICE__ float3 SgApplyExposure(float3 c, float stops, int encoding)
+{
+    if (stops == 0.0f) return c;
+
+    if (encoding == ENC_LINEAR)
+    {
+        float gain = _exp2f(stops);
+        return make_float3(SgDiEncode(SgDiDecode(c.x) * gain),
+                           SgDiEncode(SgDiDecode(c.y) * gain),
+                           SgDiEncode(SgDiDecode(c.z) * gain));
+    }
+
+    if (encoding != ENC_DISPLAY) return SgOffset3(c, stops * SgLogStop(encoding));
+
+    float mx = SgMax3(c);
+    if (mx <= SG_EPS) return c;
+
+    float gain = _exp2f(stops);
+    float mxNew;
+    if (mx < 1.0f) mxNew = mx * gain / (1.0f + mx * (gain - 1.0f));
+    else           mxNew = 1.0f + (mx - 1.0f) * gain;
+    return SgScale3(c, mxNew / mx);
+}
+
+// Largest step k in [0, kWant] along v + k * dv that keeps v inside [lo, hi].
+__DEVICE__ float SgStepLimit(float v, float dv, float lo, float hi, float kWant)
+{
+    if (dv > SG_EPS)  return _fminf(kWant, _fmaxf((hi - v) / dv, 0.0f));
+    if (dv < -SG_EPS) return _fminf(kWant, _fmaxf((lo - v) / dv, 0.0f));
+    return kWant;
+}
+
+// Evenness: the pixel keeps its own luma (all detail and texture) and its
+// chroma - the residual rgb - luma, which has zero luma - is moved towards
+// the local average chroma.  meanResidual is computed by the caller from the
+// neighbourhood (see SgGatherEvenness).  In the display domain the step is
+// shortened where needed so that no channel leaves the display range (or the
+// range the pixel already had); the limit is continuous in every input.
+__DEVICE__ float3 SgApplyEvenness(float3 c, float3 meanResidual, float k, int encoding)
+{
+    if (k <= 0.0f) return c;
+    float y  = SgLuma(c);
+    float rx = c.x - y, ry = c.y - y, rz = c.z - y;
+    float dx = meanResidual.x - rx, dy = meanResidual.y - ry, dz = meanResidual.z - rz;
+    if (encoding == ENC_DISPLAY)
+    {
+        float lo = _fminf(0.0f, SgMin3(c));
+        float hi = _fmaxf(1.0f, SgMax3(c));
+        k = SgStepLimit(c.x, dx, lo, hi, k);
+        k = SgStepLimit(c.y, dy, lo, hi, k);
+        k = SgStepLimit(c.z, dz, lo, hi, k);
+    }
+    return make_float3(y + rx + k * dx, y + ry + k * dy, y + rz + k * dz);
+}
+
+
+// ----------------------------------------------------------------------------
+//  PIXEL PIPELINE
+//  Plain arguments in, working values out.  Slider units have already been
+//  converted by the caller (fractions, degrees, stops), so this function is
+//  independent of the UI and is what an OFX port calls per pixel.
+//
+//    w             working values (after RGBToWorkingSpace)
+//    meas          SgMeasure(w) of the ORIGINAL pixel
+//    maskL         SgLumaWindow of the original pixel
+//    satLo ...     the qualifier saturation band and its (fold-safe) feather
+//    hueCentre ... the qualifier hue window (degrees)
+//    kRed/kYellow  consolidate strength per side, 0..SG_PULL_MAX
+//    kProtect      protect strength, 0..SG_PULL_MAX
+//    protectHalf   half width of the protect hue window
+//    naturalSat    protect saturation target
+//    pSat          protect saturation strength, 0..SG_PROTECT_SAT_MAX
+//    skinSatGain   Skin Saturation chroma gain
+//    exposure      Skin Exposure in stops
+//    density       Skin Density in stops per unit saturation
+//    evenK         Evenness strength 0..1, meanResidual its neighbourhood mean
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 SgSkinGuardPixel(float3 w, float3 meas, float maskL,
+                                   float satLo, float satHi, float satFeather,
+                                   float hueCentre, float halfWidth, float hueFeather,
+                                   float kRed, float kYellow,
+                                   float kProtect, float protectHalf,
+                                   float naturalSat, float pSat,
+                                   float skinSatGain, float exposure, float density,
+                                   float evenK, float3 meanResidual, int encoding)
+{
+    float sat    = meas.y;
+    float maskSL = SgNeutralGuard(sat) * SgSatWindow(sat, satLo, satHi, satFeather) * maskL;
+    float dIn    = SgHueDelta(meas.x, hueCentre);
+    float hueWin = SgHueWindow(dIn, halfWidth, hueFeather);
+    float mask   = maskSL * hueWin;
+    float maskP = maskSL * SgHueWindow(dIn, protectHalf, hueFeather);
+
+    float3 c = w;
+
+    // --- 1. evenness (on the original neighbourhood, before anything else) --
+    c = SgApplyEvenness(c, meanResidual, evenK * mask, encoding);
+
+    // --- 2. hue and saturation, in the selection encoding ------------------
+    int hueOps = (kRed > 0.0f || kYellow > 0.0f || kProtect > 0.0f) ? 1 : 0;
+
+    if (hueOps || pSat > 0.0f || skinSatGain != 1.0f)
+    {
+        float3 cs  = SgSelectionRGB(c, encoding);
+        float3 cs0 = cs;
+
+        // Consolidate, then protect, composed: the protect pull is evaluated
+        // at the hue the consolidate pull produced, so the two compose as two
+        // increasing maps and stay increasing together.
+        if (hueOps)
+        {
+            float mx     = SgMax3(cs);
+            float chroma = mx - SgMin3(cs);
+            float hueS   = RGBToHue(cs, mx, chroma);
+            float d0     = SgHueDelta(hueS, hueCentre);
+            float d1     = SgPullHue(d0, kRed, kYellow, maskSL, halfWidth, hueFeather);
+            float d2     = SgPullHue(d1, kProtect, kProtect, maskSL, protectHalf, hueFeather);
+            float dSel   = d2 - d0;
+            if (dSel != 0.0f && chroma > SG_EPS)
+            {
+                float lumaBefore = SgLuma(cs);
+                cs = ApplyHue(SgWrapHue(hueS + dSel), mx, chroma);
+                cs = SgPreserveLuminance(cs, lumaBefore, encoding);
+            }
+        }
+
+        // Protect saturation: sat -> natural^p * sat^(1-p), increasing for
+        // p < 1, with Natural Saturation inside the band so that both band
+        // edges pull in the direction that keeps the map increasing.
+        if (pSat > 0.0f)
+        {
+            float g = _powf(naturalSat / _fmaxf(sat, 1.0e-3f), pSat);
+            g = 1.0f + maskP * (_clampf(g, SG_PROTECT_GAIN_MIN, SG_PROTECT_GAIN_MAX) - 1.0f);
+            cs = SgScaleChroma(cs, SgLimitChromaGain(cs, SgLuma(cs), g, encoding == ENC_DISPLAY));
+        }
+
+        // Skin Saturation, composed after Protect in the same way as the hue
+        // pulls: its saturation mask is evaluated at the saturation Protect
+        // produced, so the two saturation maps stay increasing together.
+        if (skinSatGain != 1.0f)
+        {
+            float mx   = SgMax3(cs);
+            float sNow = SgPerceptualSaturation(mx, mx - SgMin3(cs));
+            float m    = SgNeutralGuard(sNow) * SgSatWindow(sNow, satLo, satHi, satFeather) * maskL * hueWin;
+            float g    = 1.0f + m * (skinSatGain - 1.0f);
+            cs = SgScaleChroma(cs, SgLimitChromaGain(cs, SgLuma(cs), g, encoding == ENC_DISPLAY));
+        }
+
+        if (!(cs.x == cs0.x && cs.y == cs0.y && cs.z == cs0.z))
+            c = SgSelectionToWorking(cs, encoding);
+    }
+
+    // --- 3. tone: exposure and density, in the working encoding ------------
+    float stops = mask * (exposure - density * _saturatef(sat)) *
+                  SgToneGuard(meas.z, _fabs(exposure) + _fabs(density), encoding);
+    return SgApplyExposure(c, stops, encoding);
+}
+
+
+// ----------------------------------------------------------------------------
+//  SKIN MASK PREVIEW (diagnostic)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 SgApplyPreview(float3 rgb, float mask, int mode, int encoding)
+{
+    if (mode == SM_MASK) return make_float3(mask, mask, mask);
+
+    float g = SgLuma(rgb);
+    float3 dull = make_float3(g, g, g);
+    if (encoding == ENC_DISPLAY) dull = SgScale3(dull, 0.5f);
+    return SgLerp3(dull, rgb, _saturatef(mask));
+}
+
+
+// ----------------------------------------------------------------------------
+//  4. IMAGE ACCESS  (Resolve specific; an OFX port replaces this section)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 SgReadWorking(__TEXTURE__ texR, __TEXTURE__ texG, __TEXTURE__ texB,
+                                int x, int y, int width, int height, int encoding)
+{
+    int xc = x < 0 ? 0 : (x >= width  ? width  - 1 : x);
+    int yc = y < 0 ? 0 : (y >= height ? height - 1 : y);
+    float3 rgb = make_float3(_tex2D(texR, xc, yc), _tex2D(texG, xc, yc), _tex2D(texB, xc, yc));
+    return RGBToWorkingSpace(rgb, encoding);
+}
+
+// Weight of a neighbour in the Evenness average: its spatial weight times its
+// colour and luma similarity to the centre pixel.  The similarity is what keeps
+// the average inside the skin - lips, eyes, brows, hair and background differ
+// too much in chroma or luma to contribute.
+__DEVICE__ float SgEvenWeight(float3 n, float3 resC, float lumaC, float spatial,
+                              float invSigmaC2, float invSigmaL2)
+{
+    float yn = SgLuma(n);
+    float dx = (n.x - yn) - resC.x;
+    float dy = (n.y - yn) - resC.y;
+    float dz = (n.z - yn) - resC.z;
+    float dl = yn - lumaC;
+    return spatial * _expf(-(dx * dx + dy * dy + dz * dz) * invSigmaC2 - dl * dl * invSigmaL2);
+}
+
+// Weighted mean chroma residual of the centre pixel's neighbourhood: the
+// centre plus two rings of eight taps, the outer ring rotated by 22.5 degrees.
+__DEVICE__ float3 SgGatherEvenness(__TEXTURE__ texR, __TEXTURE__ texG, __TEXTURE__ texB,
+                                   int x, int y, int width, int height,
+                                   float3 centre, float radius, int encoding)
+{
+    float sigmaC = (encoding == ENC_DISPLAY) ? SG_EVEN_SIGMA_C_DISPLAY : SG_EVEN_SIGMA_C_LOG;
+    float sigmaL = (encoding == ENC_DISPLAY) ? SG_EVEN_SIGMA_L_DISPLAY : SG_EVEN_SIGMA_L_LOG;
+    float invC2  = 1.0f / (sigmaC * sigmaC);
+    float invL2  = 1.0f / (sigmaL * sigmaL);
+
+    float lumaC = SgLuma(centre);
+    float3 resC = make_float3(centre.x - lumaC, centre.y - lumaC, centre.z - lumaC);
+
+    float sumW  = 1.0f;
+    float3 sumR = resC;
+
+    for (int ring = 0; ring < 2; ++ring)
+    {
+        float rad     = radius * (ring == 0 ? SG_EVEN_RING_INNER : SG_EVEN_RING_OUTER);
+        float spatial = (ring == 0) ? SG_EVEN_W_INNER : SG_EVEN_W_OUTER;
+        for (int i = 0; i < 8; ++i)
+        {
+            float a  = ((float)i * 45.0f + (float)ring * 22.5f) * (3.14159265f / 180.0f);
+            int dx   = (int)_floor(_cosf(a) * rad + 0.5f);
+            int dy   = (int)_floor(_sinf(a) * rad + 0.5f);
+            float3 n = SgReadWorking(texR, texG, texB, x + dx, y + dy, width, height, encoding);
+            float wt = SgEvenWeight(n, resC, lumaC, spatial, invC2, invL2);
+            float yn = SgLuma(n);
+            sumW   += wt;
+            sumR.x += wt * (n.x - yn);
+            sumR.y += wt * (n.y - yn);
+            sumR.z += wt * (n.z - yn);
+        }
+    }
+
+    return SgScale3(sumR, 1.0f / sumW);
+}
+
+
+// ----------------------------------------------------------------------------
+//  ENTRY POINT
+// ----------------------------------------------------------------------------
+
+// NOTE: Resolve parses this declaration with a line-based matcher.  It must
+// stay on ONE line, in exactly this form, or Resolve reports "wrong argument".
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB)
+{
+    float3 rgbIn = make_float3(_tex2D(p_TexR, p_X, p_Y), _tex2D(p_TexG, p_X, p_Y), _tex2D(p_TexB, p_X, p_Y));
+
+    if (uiBypass) return rgbIn;
+
+    const float k = 0.01f;                    // slider units -> fractions
+    float amount  = _saturatef(uiAmount * k);
+
+    // With every effect control at zero the input is returned untouched, so
+    // the identity case is bit exact.
+    float activity = uiConsolidate + _fabs(uiRedness) + _fabs(uiYellowGreen) +
+                     uiProtect + _fabs(uiSkinSat) + _fabs(uiDensity) +
+                     _fabs(uiExposure) + uiEvenness;
+
+    int previewOn = (uiShowMask != SM_OFF) ? 1 : 0;
+    if (!previewOn && (amount <= 0.0f || activity <= 0.0f)) return rgbIn;
+
+    // --- UI -> pipeline arguments --------------------------------------------
+    float halfWidth   = 0.5f * uiHueWidth;
+    float protectHalf = halfWidth + 0.5f * uiProtectWidth;
+    float hueFeather  = SG_HUE_FEATHER_MIN + SG_HUE_FEATHER_SOFT * uiSoftness * k;
+    float satLo      = uiSatLow * k;
+    float satHi      = _fmaxf(uiSatHigh * k, satLo);
+    float lumaLo     = uiLumaLow * k;
+    float lumaHi     = _fmaxf(uiLumaHigh * k, lumaLo);
+
+    float kRed       = SG_PULL_MAX * _saturatef((uiConsolidate + uiRedness) * k);
+    float kYellow    = SG_PULL_MAX * _saturatef((uiConsolidate + uiYellowGreen) * k);
+    float kProtect   = SG_PULL_MAX * _saturatef(uiProtect * k);
+    float pSat       = SG_PROTECT_SAT_MAX * _saturatef(uiProtect * k);
+    float naturalSat = _clampf(uiNaturalSat * k, satLo, satHi);
+    float skinSat    = 1.0f + SG_SKIN_SAT_RANGE * uiSkinSat * k;
+    float exposure   = SG_EXPOSURE_STOPS * uiExposure * k;
+    float density    = SG_DENSITY_STOPS * uiDensity * k;
+    float evenK      = _saturatef(uiEvenness * k);
+
+    // fold-safe edge widths for the current tone and saturation moves
+    float satFeather  = SgFoldSafeSatFeather(SG_SAT_FEATHER_MIN + SG_SAT_FEATHER_SOFT * uiSoftness * k, skinSat);
+    float lumaFeather = SgFoldSafeLumaFeather(SG_LUMA_FEATHER_MIN + SG_LUMA_FEATHER_SOFT * uiSoftness * k,
+                                              _fabs(exposure) + _fabs(density));
+
+    // --- measure and qualify the original pixel ------------------------------
+    float3 w    = RGBToWorkingSpace(rgbIn, uiEncoding);
+    float3 meas = SgMeasure(w, uiEncoding);
+    float maskL  = SgLumaWindow(meas.z, lumaLo, lumaHi, lumaFeather);
+    float maskSL = SgNeutralGuard(meas.y) * SgSatWindow(meas.y, satLo, satHi, satFeather) * maskL;
+    float dIn    = SgHueDelta(meas.x, uiHueCentre);
+    float mask   = maskSL * SgHueWindow(dIn, halfWidth, hueFeather);
+    float maskP  = (kProtect > 0.0f) ? maskSL * SgHueWindow(dIn, protectHalf, hueFeather) : 0.0f;
+
+    float3 outRGB = rgbIn;
+
+    if (amount > 0.0f && activity > 0.0f && (mask > 0.0f || maskP > 0.0f))
+    {
+        float3 meanRes = make_float3(0.0f, 0.0f, 0.0f);
+        if (evenK > 0.0f && mask > 0.0f)
+        {
+            float radius = _fmaxf(uiEvenRadius * (float)p_Width / SG_EVEN_REF_WIDTH, 1.0f);
+            meanRes = SgGatherEvenness(p_TexR, p_TexG, p_TexB, p_X, p_Y, p_Width, p_Height,
+                                       w, radius, uiEncoding);
+        }
+
+        float3 outW = SgSkinGuardPixel(w, meas, maskL, satLo, satHi, satFeather,
+                                       uiHueCentre, halfWidth, hueFeather,
+                                       kRed, kYellow, kProtect, protectHalf,
+                                       naturalSat, pSat, skinSat, exposure, density,
+                                       evenK, meanRes, uiEncoding);
+
+        // an untouched pixel is handed back as it came in, which keeps it bit
+        // exact even through the Scene Linear encode / decode round trip
+        if (!(outW.x == w.x && outW.y == w.y && outW.z == w.z))
+        {
+            outRGB = WorkingSpaceToRGB(outW, uiEncoding);
+            if (amount < 1.0f) outRGB = SgLerp3(rgbIn, outRGB, amount);
+        }
+    }
+
+    if (previewOn) outRGB = SgApplyPreview(outRGB, mask, uiShowMask, uiEncoding);
+
+    return outRGB;
+}
+
+// MarkCaptures MC Skin Guard
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com

@@ -1,0 +1,26 @@
+MarkCaptures MC Skin Guard
+© 2026 Mark van der Vis / MarkCaptures
+www.markcaptures.com
+
+All rights reserved.
+
+This licence covers every file in this folder (MC_Skin-Guard-v1.0.dctl, its
+manual, its reference implementation and its tests). It replaces, for these
+files, any other licence found elsewhere in this repository.
+
+You MAY:
+  * install and use MC Skin Guard in DaVinci Resolve on your own computers;
+  * use it for personal and for commercial grading work, and deliver,
+    sell and license the images and films you grade with it.
+
+You MAY NOT, without prior written permission from Mark van der Vis /
+MarkCaptures:
+  * redistribute, share, upload, publish or otherwise make the files, or any
+    modified version or part of them, available to anyone else;
+  * sell, resell, rent, sublicense or bundle them, alone or with other
+    products (including LUT packs, plugins, presets or templates);
+  * remove or alter the copyright notices.
+
+The software is provided "as is", without warranty of any kind. In no event
+shall the author be liable for any claim, damages or other liability arising
+from its use.
