@@ -1,0 +1,3 @@
+tests/mcf_harness
+tests/mcf_enums.h
+__pycache__/

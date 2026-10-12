@@ -1,0 +1,25 @@
+MarkCaptures MC Film
+© 2026 Mark van der Vis / MarkCaptures
+www.markcaptures.com
+
+This folder contains two kinds of material under two licences.
+
+1. CODE AND DOCUMENTATION - All rights reserved.
+   The DCTL code, the build and test tools, the film model and the
+   documentation. You may install and use the DCTLs for personal and
+   commercial grading work and sell the images and films you make with them.
+   You may not redistribute, share, publish, sell, resell, sublicense or
+   bundle the files or any modified version or part of them without prior
+   written permission from Mark van der Vis / MarkCaptures.
+
+2. STOCK DATA - CC BY-SA 4.0.
+   The stock data tables (data/mcfilm_tables.json and the section of each
+   generated .dctl marked "STOCK DATA") are derived from the spektrafilm
+   profiles by Andrea Volpato:
+       https://github.com/andreavolpato/spektrafilm
+       Licensed CC BY-SA 4.0 - https://creativecommons.org/licenses/by-sa/4.0/
+   Modified by Mark van der Vis / MarkCaptures; see data/CHANGELOG.txt.
+   These tables, and only these, are available to everyone under CC BY-SA
+   4.0, with this attribution.
+
+The software is provided "as is", without warranty of any kind.
