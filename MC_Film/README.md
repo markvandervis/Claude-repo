@@ -8,9 +8,9 @@ Stock data: derived from **spektrafilm by Andrea Volpato** (https://github.com/a
 
 ---
 
-## MC Film Core v0.2: negative + print engine
+## MC Film Core v0.3: negative + print engine
 
-`MC_Film-Core-v0.2.dctl`
+`MC_Film-Core-v0.3.dctl`
 
 A physically based simulation: the scene is exposed onto a colour negative, developed, printed with printer lights onto a print stock, then projected and viewed.
 
@@ -43,11 +43,30 @@ Each negative and print pair is timed so that a scene 18% grey prints as a neutr
 | Bleach Keeps Mid Grey | Re-times the print so 18% grey keeps its brightness: exact for the negative, within about 1/10 stop for the print |
 | Gamut Compress Input | Softly brings colours outside Rec.709 inside before exposure, instead of clipping them |
 | Bypass | Return the input unchanged |
-| Input Encoding | DaVinci WG Intermediate (default), ACES AP1 ACEScct, Scene Linear Rec709, Rec709 Gamma 2.4 |
+| Input Encoding | DaVinci WG Intermediate (default), ACES AP1 ACEScct, Scene Linear Rec709, Rec709 Gamma 2.4, or Negative Cineon Log (prints a negative from another MC Film Core node) |
 | Negative Stock / Print Stock | The stocks above |
-| Output | Rec709 Gamma 2.4, sRGB, P3 D65 Gamma 2.6, Rec2020 Gamma 2.4, or Negative Cineon Log (feeds an external print LUT) |
+| Output | Rec709 Gamma 2.4, sRGB, P3 D65 Gamma 2.6, Rec2020 Gamma 2.4, DaVinci WG Intermediate (the print kept in DWG, see below), or Negative Cineon Log (the developed negative, for film effects, a second MC Film Core node or a print LUT) |
 
 **Node placement.** The node's output is the projected print, which is display-referred, like a print LUT. Put it last, after your grade, and set Output to match your monitoring. With DaVinci Wide Gamut colour management, set the timeline output so it doesn't apply a second display transform, or use a CST after the node.
+
+**Chaining with other DCTLs: three ways to use it**
+
+```
+A. One node (display out)
+   [grade] -> [MC Film Core  Output: Rec709 Gamma 2.4]
+
+B. DWG out, for effects that act on the finished print (mist, vignette, gate, weave)
+   [grade] -> [MC Film Core  Output: DaVinci WG Intermediate] -> [DWG effects]
+           -> [CST  DWG/DI -> Rec.709 Gamma 2.4, tone mapping None, gamut mapping None]
+
+C. Split negative / print, for effects that live on the film (grain per dye layer, halation)
+   [grade] -> [MC Film Core  Output: Negative Cineon Log] -> [film effects on the negative]
+           -> [MC Film Core  Input: Negative Cineon Log, same Negative Stock] -> display or DWG
+```
+
+- **B** is exact: the DWG output plus that CST reproduces the Rec709 output to within 1e-6.
+- **C** with no effects in between gives the same result as A, to within 1e-6, bleach bypass included. Set Bleach Bypass on the second (printing) node; the Cineon negative carries the dye densities only.
+- C is also how the OFX plugin will be organised internally.
 
 **Install.** Copy the `.dctl` to `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\LUT` (macOS: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/LUT`). Then use **Project Settings › Color Management › Update Lists**, and pick it under **ResolveFX Color › DCTL**.
 

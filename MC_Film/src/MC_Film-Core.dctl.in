@@ -41,7 +41,9 @@
 //  ---------------------------------------------------------------------------
 //    1. helpers, encodings          - pure scalar maths
 //    2. stock data tables           - generated, CC BY-SA 4.0
-//    3. film model                  - McfExpose ... McfProject, plain
+//    3. film model                  - negative stage (McfDevelopNegative) and
+//                                     print stage (McfPrintStage), joined by
+//                                     the developed dye densities; plain
 //                                     arguments, no UI
 //    4. transform()                 - UI -> arguments
 // ============================================================================
@@ -82,7 +84,7 @@ DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
 
 DEFINE_UI_PARAMS(uiInput, Input Encoding, DCTLUI_COMBO_BOX, 0, {@@INPUT_ENUMS@@}, {@@INPUT_NAMES@@})
-DEFINE_UI_TOOLTIP(uiInput, "What this node receives. In a DaVinci Wide Gamut colour managed project choose DaVinci WG Intermediate.")
+DEFINE_UI_TOOLTIP(uiInput, "What this node receives. In a DaVinci Wide Gamut colour managed project choose DaVinci WG Intermediate. Negative Cineon Log prints a negative made by another MC Film Core node (Output: Negative Cineon Log) - set the same Negative Stock on both.")
 DEFINE_UI_PARAMS(uiNegative, Negative Stock, DCTLUI_COMBO_BOX, 1, {@@NEG_ENUMS@@}, {@@NEG_NAMES@@})
 DEFINE_UI_TOOLTIP(uiNegative, "The camera negative the scene is exposed onto.")
 DEFINE_UI_PARAMS(uiPrint, Print Stock, DCTLUI_COMBO_BOX, 0, {@@PRT_ENUMS@@}, {@@PRT_NAMES@@})
@@ -92,7 +94,7 @@ DEFINE_UI_TOOLTIP(uiBleach, "Skip-bleach processing: metallic silver stays in th
 DEFINE_UI_PARAMS(uiBleachStage, Bleach Stage, DCTLUI_COMBO_BOX, 0, {BS_PRINT, BS_NEGATIVE}, {Print, Negative})
 DEFINE_UI_TOOLTIP(uiBleachStage, "Where the bleach is skipped. Print: deep, desaturated blacks and a harder print (the classic release-print look). Negative: the silver piles into the negative's highlights, so the print gets harder and its highlights blow out sooner.")
 DEFINE_UI_PARAMS(uiOutput, Output, DCTLUI_COMBO_BOX, 0, {@@OUT_ENUMS@@}, {@@OUT_NAMES@@})
-DEFINE_UI_TOOLTIP(uiOutput, "Display encoding of the projected print. Negative Cineon Log outputs the developed negative as Cineon densities, to feed a print LUT instead.")
+DEFINE_UI_TOOLTIP(uiOutput, "Encoding of the projected print. DaVinci WG Intermediate keeps the print in DWG for further DWG nodes; finish with a CST to Rec.709 Gamma 2.4 with tone mapping and gamut mapping None. Negative Cineon Log outputs the developed negative, for film effects on the negative, a second MC Film Core node or a print LUT.")
 
 
 // ----------------------------------------------------------------------------
@@ -375,6 +377,12 @@ __DEVICE__ float3 McfProject(float3 p, float silver, int prt)
                     MCF_PRT_CAT[c + 6], MCF_PRT_CAT[c + 7], MCF_PRT_CAT[c + 8], make_float3(x, y, z));
 }
 
+__DEVICE__ float McfDiEncode(float x)
+{
+    if (x > 0.00262409f) return (_log2f(x + 0.0075f) + 7.0f) * 0.07329248f;
+    return x * 10.44426855f;
+}
+
 // D65 XYZ -> display RGB (linear).
 __DEVICE__ float3 McfXyzToOutput(float3 xyz, int output)
 {
@@ -391,23 +399,53 @@ __DEVICE__ float3 McfXyzToOutput(float3 xyz, int output)
                      0.0556301f, -0.2039770f,  1.0569715f, xyz);
 }
 
-// The whole film pipeline, plain arguments.  rgb is scene-linear Rec.709.
+// Cineon negative encoding: base at code 95 of 1023, 0.002 density per code
+// value.  It carries the developed DYE densities only - the interface between
+// the negative stage and the print stage, so that effects that live on the
+// film (grain per dye layer, halation) can run between two nodes.
+// Negative-stage bleach bypass silver is applied by the node that prints.
+#define MCF_CINEON_BLACK    (95.0f / 1023.0f)
+#define MCF_CINEON_DPC      2.046f
+
+__DEVICE__ float3 McfCineonEncode(float3 d)
+{
+    return make_float3(MCF_CINEON_BLACK + d.x / MCF_CINEON_DPC, MCF_CINEON_BLACK + d.y / MCF_CINEON_DPC,
+                       MCF_CINEON_BLACK + d.z / MCF_CINEON_DPC);
+}
+
+__DEVICE__ float3 McfCineonDecode(float3 c)
+{
+    return make_float3((c.x - MCF_CINEON_BLACK) * MCF_CINEON_DPC, (c.y - MCF_CINEON_BLACK) * MCF_CINEON_DPC,
+                       (c.z - MCF_CINEON_BLACK) * MCF_CINEON_DPC);
+}
+
+// Display encoding of the projected print (linear display RGB in).
+//   OUT_DWG: the display-linear Rec.709 print carried into DaVinci WG /
+//   Intermediate without clipping.  A Color Space Transform DWG / DI ->
+//   Rec.709 Gamma 2.4 with tone mapping and gamut mapping set to None gives
+//   back the Rec709 Gamma 2.4 output exactly, so DWG effects can follow.
+__DEVICE__ float3 McfEncodeOutput(float3 lin, int output)
+{
+    if (output == OUT_DWG)
+    {
+        float3 w = McfMul33(0.56273797f, 0.32348330f, 0.11377874f,
+                            0.07775428f, 0.74978114f, 0.17246458f,
+                            0.06466018f, 0.19195861f, 0.74338121f, lin);
+        return make_float3(McfDiEncode(w.x), McfDiEncode(w.y), McfDiEncode(w.z));
+    }
+    return make_float3(McfEncodeChannel(lin.x, output), McfEncodeChannel(lin.y, output),
+                       McfEncodeChannel(lin.z, output));
+}
+
+// Print stage, plain arguments: developed negative dye densities -> output.
 //   silverNegK / silverPrtK  bleach bypass silver at the negative / print
 //   silverE                  silver contrast exponent
 //   preserveMid              re-time the print so 18 % grey keeps its density
-__DEVICE__ float3 McfFilmPipeline(float3 rgb, int neg, int prt, int output,
-                                  float exposureStops, float negGamma, float filmSat,
-                                  float3 printerPoints, float printContrast,
-                                  float silverNegK, float silverPrtK, float silverE, int preserveMid)
+__DEVICE__ float3 McfPrintStage(float3 d, int neg, int prt, int output,
+                                float3 printerPoints, float printContrast,
+                                float silverNegK, float silverPrtK, float silverE, int preserveMid)
 {
-    float3 d = McfDevelopNegative(rgb, neg, exposureStops, negGamma, filmSat);
     float sNeg = McfSilver(d, silverNegK, silverE);
-
-    if (output == OUT_CINEON)        // Cineon: base at code 95, 0.002 density per code value
-        return make_float3(95.0f / 1023.0f + (d.x + sNeg) / 2.046f,
-                           95.0f / 1023.0f + (d.y + sNeg) / 2.046f,
-                           95.0f / 1023.0f + (d.z + sNeg) / 2.046f);
-
     float3 h = McfPrintExposure(d, sNeg, neg, prt);
     int b = (neg * MCF_NPRT + prt) * 3;
     h = make_float3(h.x + MCF_BALANCE[b + 0] + MCF_PRINTER_POINT * printerPoints.x,
@@ -431,8 +469,7 @@ __DEVICE__ float3 McfFilmPipeline(float3 rgb, int neg, int prt, int output,
     float3 pivot = make_float3(MCF_PIVOT[b + 0], MCF_PIVOT[b + 1], MCF_PIVOT[b + 2]);
     float3 p = McfDevelopPrint(h, pivot, prt, printContrast);
     float3 lin = McfXyzToOutput(McfProject(p, McfSilver(p, silverPrtK, silverE), prt), output);
-    return make_float3(McfEncodeChannel(lin.x, output), McfEncodeChannel(lin.y, output),
-                       McfEncodeChannel(lin.z, output));
+    return McfEncodeOutput(lin, output);
 }
 
 
@@ -447,11 +484,20 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float3 rgbIn = make_float3(p_R, p_G, p_B);
     if (uiBypass) return rgbIn;
 
-    float3 lin = McfDecodeInput(rgbIn, uiInput);
-    if (uiGamutCompress) lin = McfGamutCompress(lin);
-    lin = make_float3(_fmaxf(lin.x, 0.0f), _fmaxf(lin.y, 0.0f), _fmaxf(lin.z, 0.0f));
+    // --- negative stage: scene -> developed dye densities --------------------
+    float3 d;
+    if (uiInput == IN_CINEON)
+        d = McfCineonDecode(rgbIn);
+    else
+    {
+        float3 lin = McfDecodeInput(rgbIn, uiInput);
+        if (uiGamutCompress) lin = McfGamutCompress(lin);
+        lin = make_float3(_fmaxf(lin.x, 0.0f), _fmaxf(lin.y, 0.0f), _fmaxf(lin.z, 0.0f));
+        d = McfDevelopNegative(lin, uiNegative, uiExposure, uiNegContrast * McfPushGamma(uiPushPull), uiFilmSat);
+    }
+    if (uiOutput == OUT_CINEON) return McfCineonEncode(d);
 
-    float gamma = uiNegContrast * McfPushGamma(uiPushPull);
+    // --- print stage ------------------------------------------------------------
     float3 points = make_float3(uiPrintExposure + uiPrinterRed, uiPrintExposure + uiPrinterGreen,
                                 uiPrintExposure + uiPrinterBlue);
 
@@ -461,10 +507,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     bk *= uiBleachStrength;
     be *= uiSilverContrast;
 
-    return McfFilmPipeline(lin, uiNegative, uiPrint, uiOutput,
-                           uiExposure, gamma, uiFilmSat, points, uiPrintContrast,
-                           uiBleachStage == BS_NEGATIVE ? bk : 0.0f, uiBleachStage == BS_PRINT ? bk : 0.0f,
-                           be, uiPreserveMid);
+    return McfPrintStage(d, uiNegative, uiPrint, uiOutput, points, uiPrintContrast,
+                         uiBleachStage == BS_NEGATIVE ? bk : 0.0f, uiBleachStage == BS_PRINT ? bk : 0.0f,
+                         be, uiPreserveMid);
 }
 
 // MarkCaptures MC Film Core

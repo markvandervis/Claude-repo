@@ -89,6 +89,7 @@ OUTPUTS = [
     ("OUT_SRGB",    "sRGB"),
     ("OUT_P3",      "P3 D65 Gamma 2.6"),
     ("OUT_2020",    "Rec2020 Gamma 2.4"),
+    ("OUT_DWG",     "DaVinci WG Intermediate"),
     ("OUT_CINEON",  "Negative Cineon Log"),
 ]
 INPUTS = [
@@ -96,6 +97,7 @@ INPUTS = [
     ("IN_ACESCCT",  "ACES AP1 ACEScct"),
     ("IN_LINEAR",   "Scene Linear Rec709"),
     ("IN_709",      "Rec709 Gamma 2.4"),
+    ("IN_CINEON",   "Negative Cineon Log"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -120,6 +122,7 @@ REC709_TO_XYZ = np.array([[0.4123908, 0.3575843, 0.1804808],
                           [0.0193308, 0.1191948, 0.9505322]])
 XYZ_TO = {
     "OUT_709":  np.linalg.inv(REC709_TO_XYZ),
+    "OUT_DWG":  np.linalg.inv(REC709_TO_XYZ),
     "OUT_SRGB": np.linalg.inv(REC709_TO_XYZ),
     "OUT_P3":   np.array([[2.4934969, -0.9313836, -0.4027108],
                           [-0.8294890, 1.7626641, 0.0236247],
@@ -132,6 +135,9 @@ XYZ_TO = {
 DWG_TO_REC709 = np.array([[1.89871504, -0.79180471, -0.10691033],
                           [-0.16894835, 1.48839859, -0.31945024],
                           [-0.12152602, -0.31546761, 1.43699363]])
+REC709_TO_DWG = np.array([[0.56273797, 0.32348330, 0.11377874],
+                          [0.07775428, 0.74978114, 0.17246458],
+                          [0.06466018, 0.19195861, 0.74338121]])
 AP1_TO_REC709 = np.array([[1.70505099, -0.62179212, -0.08325887],
                           [-0.13025642, 1.14080474, -0.01054832],
                           [-0.02400336, -0.12896898, 1.15297233]])
@@ -501,7 +507,16 @@ def load_tables(path):
 # ---------------------------------------------------------------------------
 #  full reference render (mirrors transform() in the DCTL)
 # ---------------------------------------------------------------------------
+def di_encode(x):
+    return (math.log2(x + 0.0075) + 7.0) * 0.07329248 if x > 0.00262409 else x * 10.44426855
+
+
 def encode_output(rgb, output):
+    if output == "OUT_DWG":
+        # display-linear Rec.709 carried into DaVinci WG / Intermediate, no
+        # clipping: a CST DWG/DI -> Rec.709 Gamma 2.4 with tone mapping and
+        # gamut mapping off gives back the Rec709 Gamma 2.4 output exactly
+        return np.array([di_encode(v) for v in REC709_TO_DWG @ rgb])
     rgb = np.maximum(rgb, 0.0)
     if output == "OUT_SRGB":
         return np.array([12.92 * v if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055 for v in rgb])
@@ -518,6 +533,13 @@ def prepare(tables):
         white_y = (p["view"] * 10.0 ** -p["base"]) @ cmf[:, 1]
         p["viewcmf"] = p["view"][:, None] * cmf / white_y
     return tables
+
+
+# Cineon negative encoding: base at code 95 of 1023, 0.002 density per code.
+# Carries the developed DYE densities only; negative-stage bleach bypass
+# silver is applied by the node that prints, from these densities.
+CINEON_BLACK = 95.0 / 1023.0
+CINEON_DENSITY_PER_CODE = 2.046
 
 
 # Bleach bypass: retained metallic silver is a spectrally flat density that
@@ -539,21 +561,26 @@ def render_pixel(rgb, tables, neg_i=1, prt_i=0, encoding="IN_DWG", output="OUT_7
         prepare(tables)
     neg = tables["negs"][neg_i]
     prt = tables["prints"][prt_i]
-    lin = decode_input(rgb, encoding)
-    if gamut:
-        lin = gamut_compress(lin)
-    lin = np.maximum(lin, 0.0)
-    gamma = neg_contrast * push_gamma(push)
     kb, eb = BLEACH_MODES[bleach]
     kb *= bleach_strength
     eb *= silver_contrast
     k_neg = kb if bleach_stage == "negative" else 0.0
     k_prt = kb if bleach_stage == "print" else 0.0
 
-    dens = negative_density(lin, neg, exposure, gamma, film_sat)
-    s_neg = silver_density(dens, k_neg, eb)
+    # --- negative stage: scene -> developed dye densities ------------------
+    if encoding == "IN_CINEON":
+        dens = (np.asarray(rgb, dtype=float) - CINEON_BLACK) * CINEON_DENSITY_PER_CODE
+    else:
+        lin = decode_input(rgb, encoding)
+        if gamut:
+            lin = gamut_compress(lin)
+        lin = np.maximum(lin, 0.0)
+        dens = negative_density(lin, neg, exposure, neg_contrast * push_gamma(push), film_sat)
     if output == "OUT_CINEON":
-        return 95.0 / 1023.0 + (dens + s_neg) / 2.046
+        return CINEON_BLACK + dens / CINEON_DENSITY_PER_CODE
+
+    # --- print stage: dye densities -> projected print ----------------------
+    s_neg = silver_density(dens, k_neg, eb)
     t = 10.0 ** -(neg["base"] + neg["dyes"] @ dens + s_neg)
     log_h = np.log10(np.maximum(t @ prt["lampsens"], 1e-10))
     log_h = log_h + tables["balance"][neg_i][prt_i] + PRINTER_POINT * (np.array(printer) + print_exposure)

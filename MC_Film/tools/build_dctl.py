@@ -25,7 +25,7 @@ sys.path.insert(0, HERE)
 
 import mcfilm_model as m  # noqa: E402
 
-VERSION = "0.2"
+VERSION = "0.3"
 TABLES_JSON = os.path.join(ROOT, "data", "mcfilm_tables.json")
 TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Core.dctl.in")
 OUTPUT = os.path.join(ROOT, "MC_Film-Core-v%s.dctl" % VERSION)

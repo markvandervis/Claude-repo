@@ -308,6 +308,42 @@ def test_film_sat_bleach():
     check(off == base, "Bleach Off ignores Bleach Strength and Silver Contrast (bit exact)")
 
 
+def cst_dwg_to_709(c):
+    """What a Resolve CST DaVinci WG / Intermediate -> Rec.709 Gamma 2.4 with
+    tone mapping and gamut mapping None does: decode, matrix, clip, encode."""
+    def di_decode(y):
+        return 2.0 ** (min(y, 5.0) / 0.07329248 - 7.0) - 0.0075 if y > 0.02740668 else y / 10.44426855
+    lin = m.DWG_TO_REC709 @ np.array([di_decode(v) for v in c])
+    return tuple(max(v, 0.0) ** (1 / 2.4) for v in lin)
+
+
+def test_stage_chaining():
+    section("6c. chaining: DWG output and split negative / print nodes")
+    rng = random.Random(6)
+    px = [tuple(f32(di_encode(rng.uniform(0, 1.5) * rng.choice([0.05, 0.2, 1.0]))) for _ in range(3))
+          for _ in range(150)]
+    worst = 0.0
+    for ni, pi in ((1, 0), (3, 1), (5, 2), (10, 7)):
+        ui = dict(uiNegative=ni, uiPrint=pi, uiPushPull=0.5, uiFilmSat=1.2, uiPrinterRed=2)
+        a = run(px, uiOutput=OUT["OUT_709"], **ui)
+        b = [cst_dwg_to_709(o) for o in run(px, uiOutput=OUT["OUT_DWG"], **ui)]
+        worst = max(worst, max(abs(x - y) for pa, pb in zip(a, b) for x, y in zip(pa, pb)))
+    check(worst < 2e-5, "DWG output + CST DWG -> Rec709 Gamma 2.4 (no tone / gamut mapping) == "
+          "Rec709 output (%.1e)" % worst)
+
+    worst = 0.0
+    for ni, pi, extra in ((1, 0, dict(uiBleach=1, uiBleachStrength=0.8)),
+                          (3, 0, dict(uiBleach=2, uiBleachStage=1, uiBleachStrength=1.0)),
+                          (6, 2, dict(uiPrintContrast=1.2, uiPrinterBlue=-3))):
+        neg_ui = dict(uiNegative=ni, uiExposure=0.7, uiPushPull=1.0, uiFilmSat=0.8)
+        one = run(px, uiPrint=pi, **neg_ui, **extra)
+        cin = run(px, uiOutput=OUT["OUT_CINEON"], **neg_ui)
+        two = run(cin, uiInput=ENC["IN_CINEON"], uiNegative=ni, uiPrint=pi, **extra)
+        worst = max(worst, max(abs(x - y) for pa, pb in zip(one, two) for x, y in zip(pa, pb)))
+    check(worst < 2e-5, "negative node (Cineon out) -> print node (Cineon in) == one node, incl. "
+          "bleach at either stage (%.1e)" % worst)
+
+
 def test_extremes():
     section("7. extreme inputs")
     px = [(0, 0, 0), (1e6, 1e6, 1e6), (-5, -5, -5), (50, -3, 0.2), (1e-30, 0, 0), (0.5, 0.5, -20)]
@@ -332,6 +368,7 @@ def main():
     test_hue()
     test_controls()
     test_film_sat_bleach()
+    test_stage_chaining()
     test_extremes()
     print("\n%d checks, %d failed" % (_n, len(_fail)))
     return 1 if _fail else 0
