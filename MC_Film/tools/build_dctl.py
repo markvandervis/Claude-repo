@@ -24,11 +24,17 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 import mcfilm_model as m  # noqa: E402
+import mcfilm_effects as fx  # noqa: E402
 
 VERSION = "0.3"
 TABLES_JSON = os.path.join(ROOT, "data", "mcfilm_tables.json")
 TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Core.dctl.in")
 OUTPUT = os.path.join(ROOT, "MC_Film-Core-v%s.dctl" % VERSION)
+EFFECTS_VERSION = "0.1"
+GRAIN_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Grain.dctl.in")
+GRAIN_OUTPUT = os.path.join(ROOT, "MC_Film-Grain-v%s.dctl" % EFFECTS_VERSION)
+HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
+HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % EFFECTS_VERSION)
 
 DATA_NOTICE = """\
 //  STOCK DATA - LICENCE NOTICE
@@ -129,6 +135,38 @@ def generate(t):
     return OUTPUT
 
 
+def fill(template, output, subs):
+    src = open(template, encoding="utf-8").read()
+    for k, v in subs.items():
+        src = src.replace("@@%s@@" % k, v)
+    assert "@@" not in src, "unreplaced template field in " + template
+    with open(output, "w", encoding="utf-8") as f:
+        f.write(src)
+    return output
+
+
+def generate_effects():
+    gauge = {"GAUGE_ENUMS": ", ".join(g[0] for g in fx.GAUGES),
+             "GAUGE_NAMES": ", ".join(g[1] for g in fx.GAUGES)}
+    widths = [g[2] * 1000.0 for g in fx.GAUGES]
+    grain_tables = c_array("MCG_GAUGE_WIDTH_UM", widths)
+    grain_tables += c_array("MCG_GRANULARITY", [fx.GRANULARITY_X1000[k] / 1000.0 for _, _, k in m.NEGATIVES])
+    out = [fill(GRAIN_TEMPLATE, GRAIN_OUTPUT, dict(gauge, **{
+        "VERSION": EFFECTS_VERSION,
+        "NEG_ENUMS": ", ".join(e for e, _, _ in m.NEGATIVES),
+        "NEG_NAMES": ", ".join(n for _, n, _ in m.NEGATIVES),
+        "GRAIN_CELL_UM": repr(fx.GRAIN_CELL_UM),
+        "GRAIN_FIELD_NORM": "%.9g" % fx.GRAIN_FIELD_NORM,
+        "GRAIN_TABLES": grain_tables}))]
+    radii, cs, sn = fx.halo_taps()
+    halo_tables = c_array("MCH_GAUGE_WIDTH_UM", widths)
+    halo_tables += c_array("MCH_TAP_RADIUS", radii) + c_array("MCH_TAP_COS", cs) + c_array("MCH_TAP_SIN", sn)
+    out.append(fill(HALO_TEMPLATE, HALO_OUTPUT, dict(gauge, **{
+        "VERSION": EFFECTS_VERSION, "HALO_UM": repr(fx.HALO_UM), "HALO_TAPS": str(fx.HALO_TAPS),
+        "HALO_TABLES": halo_tables})))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--profiles", help="spektrafilm data/profiles directory")
@@ -138,8 +176,8 @@ def main():
         m.save_tables(t, TABLES_JSON)
         print("wrote", TABLES_JSON)
     t = m.load_tables(TABLES_JSON)
-    out = generate(t)
-    print("wrote", out, "(%d KB)" % (os.path.getsize(out) // 1024))
+    for out in [generate(t)] + generate_effects():
+        print("wrote", out, "(%d KB)" % (os.path.getsize(out) // 1024))
 
 
 if __name__ == "__main__":

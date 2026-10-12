@@ -1,0 +1,200 @@
+// MarkCaptures MC Film Halation
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
+
+// ============================================================================
+//  MC_Film-Halation-v@@VERSION@@.dctl  -  MC Film Halation
+//  ---------------------------------------------------------------------------
+//  Halation for DaVinci Resolve Studio: light that passes through the
+//  emulsion, scatters in the film base and comes back to re-expose the
+//  emulsion from behind.  It mainly reaches the red-sensitive layer (the
+//  bottom one), which is why halation is the red-orange glow around bright
+//  highlights.
+//
+//  It acts on the scene exposure, so it goes BEFORE the negative:
+//
+//    [grade] -> [MC Film Halation] -> [MC Film Core] ...
+//
+//  REDISTRIBUTION, NOT ADDITION
+//  On a large even area the light scattered out of a point is replaced by
+//  light scattered in from its neighbours, and that balance is already part
+//  of the stock's measured response.  So the operator only moves light:
+//
+//      R' = R + a * (blur(T(R)) - T(R))
+//
+//  An even field is left exactly as it is; near a bright edge the red layer
+//  gains a halo and the core gives up a little.  T is an optional soft
+//  highlight threshold (0 = physical, every level scatters).
+//
+//  THE KERNEL
+//  Radially an exponential, with its scale set on the film in micrometres and
+//  converted to pixels by the gauge (frame width) and the timeline width, so
+//  the halo has the same size on the film at any resolution.  It is
+//  importance-sampled: the taps sit at the kernel's radial quantiles on a
+//  golden-angle spiral, all with equal weight, and the spiral is rotated per
+//  pixel so the sampling shows as fine noise instead of rings.
+//
+//  Version : @@VERSION@@
+//  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
+//            You may use this file for personal and commercial grading work.
+//            You may not redistribute, share, sell, sublicense or publish it,
+//            in whole or in part.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+//  UI
+// ----------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(uiHalAmount, Halation Amount, DCTLUI_SLIDER_FLOAT, 0.25, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHalAmount, "Fraction of the red layer's light that is scattered back through the base. Modern cine stocks with an anti-halation backing are around 0.1 - 0.3; a stock without it can reach 0.6.")
+DEFINE_UI_PARAMS(uiHalSize, Halation Size, DCTLUI_SLIDER_FLOAT, 1.0, 0.25, 4.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHalSize, "Halo radius relative to a typical film base. It is set on the film, so a smaller gauge gives a bigger halo on screen.")
+DEFINE_UI_PARAMS(uiHalColour, Halation Colour, DCTLUI_SLIDER_FLOAT, 0.2, 0.0, 0.6, 0.01)
+DEFINE_UI_TOOLTIP(uiHalColour, "How much of the scattered light also reaches the green layer: 0 is a deep red halo, higher values move it towards orange.")
+DEFINE_UI_PARAMS(uiHalThreshold, Highlight Threshold, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 6.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHalThreshold, "Stops above 18 % grey below which light does not scatter. 0 is physical (everything scatters, mostly visible at bright edges); raise it to keep halation on the brightest highlights only.")
+
+DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
+
+DEFINE_UI_PARAMS(uiInput, Encoding, DCTLUI_COMBO_BOX, 0, {HE_DWG, HE_ACESCCT, HE_LINEAR}, {DaVinci WG Intermediate, ACES AP1 ACEScct, Scene Linear})
+DEFINE_UI_TOOLTIP(uiInput, "Encoding of this node's input; the output is in the same encoding.")
+DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, 3, {@@GAUGE_ENUMS@@}, {@@GAUGE_NAMES@@})
+DEFINE_UI_TOOLTIP(uiGauge, "Film format: sets how big the halo is on screen. Use the same gauge as on MC Film Grain.")
+DEFINE_UI_PARAMS(uiQuality, Quality, DCTLUI_COMBO_BOX, 1, {HQ_DRAFT, HQ_GOOD, HQ_BEST}, {Draft 32, Good 64, Best 128})
+DEFINE_UI_TOOLTIP(uiQuality, "Number of samples of the halo. More is smoother and slower.")
+
+
+// ----------------------------------------------------------------------------
+//  CONSTANTS
+// ----------------------------------------------------------------------------
+
+#define MCH_HALO_UM         @@HALO_UM@@f     // exponential scale of the halo on film
+#define MCH_MIDGRAY         0.184f
+#define MCH_TAPS_MAX        @@HALO_TAPS@@
+
+@@HALO_TABLES@@
+
+
+// ----------------------------------------------------------------------------
+//  ENCODINGS
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float MchDiDecode(float y)
+{
+    if (y > 0.02740668f) return _exp2f(_fminf(y, 5.0f) / 0.07329248f - 7.0f) - 0.0075f;
+    return y / 10.44426855f;
+}
+
+__DEVICE__ float MchDiEncode(float x)
+{
+    if (x > 0.00262409f) return (_log2f(x + 0.0075f) + 7.0f) * 0.07329248f;
+    return x * 10.44426855f;
+}
+
+__DEVICE__ float MchCctDecode(float y)
+{
+    if (y > 0.155251141552511f) return _exp2f(_fminf(y, 4.0f) * 17.52f - 9.72f);
+    return (y - 0.0729055341958355f) / 10.5402377416545f;
+}
+
+__DEVICE__ float MchCctEncode(float x)
+{
+    if (x <= 0.0078125f) return 10.5402377416545f * x + 0.0729055341958355f;
+    return (_log2f(x) + 9.72f) / 17.52f;
+}
+
+__DEVICE__ float MchDecode(float v, int enc)
+{
+    if (enc == HE_DWG) return MchDiDecode(v);
+    if (enc == HE_ACESCCT) return MchCctDecode(v);
+    return v;
+}
+
+__DEVICE__ float MchEncode(float v, int enc)
+{
+    if (enc == HE_DWG) return MchDiEncode(v);
+    if (enc == HE_ACESCCT) return MchCctEncode(v);
+    return v;
+}
+
+__DEVICE__ unsigned int MchHash(unsigned int x)
+{
+    x ^= x >> 16; x *= 0x7feb352dU;
+    x ^= x >> 15; x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return x;
+}
+
+
+// ----------------------------------------------------------------------------
+//  OPERATOR  (plain arguments)
+// ----------------------------------------------------------------------------
+
+// Soft highlight threshold, in linear light: 0 below `thr`, then rising with
+// a smooth (C1) knee one stop wide into a straight line of slope 1.  thr = 0
+// is the identity.
+__DEVICE__ float MchThreshold(float v, float thr)
+{
+    if (thr <= 0.0f) return v;
+    float k = thr;                         // knee width
+    float x = v - thr;
+    if (x <= 0.0f) return 0.0f;
+    if (x >= k) return x - 0.5f * k;
+    return x * x / (2.0f * k);
+}
+
+// Halation applied to linear red / green, given the blurred (thresholded) red.
+__DEVICE__ float3 MchHalate(float3 lin, float blurred, float amount, float colour, float thr)
+{
+    float own = MchThreshold(lin.x, thr);
+    float delta = amount * (blurred - own);
+    return make_float3(lin.x + delta, lin.y + colour * _fmaxf(delta, 0.0f), lin.z);
+}
+
+
+// ----------------------------------------------------------------------------
+//  ENTRY POINT  (texture reads: Resolve specific)
+// ----------------------------------------------------------------------------
+
+// NOTE: Resolve parses this declaration with a line-based matcher.  It must
+// stay on ONE line, in exactly this form, or Resolve reports "wrong argument".
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB)
+{
+    float3 c = make_float3(_tex2D(p_TexR, p_X, p_Y), _tex2D(p_TexG, p_X, p_Y), _tex2D(p_TexB, p_X, p_Y));
+    if (uiBypass || uiHalAmount <= 0.0f) return c;
+
+    float thr = (uiHalThreshold > 0.0f) ? MCH_MIDGRAY * _exp2f(uiHalThreshold) : 0.0f;
+    float footUm = MCH_GAUGE_WIDTH_UM[uiGauge] / (float)p_Width;
+    float scalePx = MCH_HALO_UM * uiHalSize / footUm;          // exponential scale in pixels
+
+    int stride = (uiQuality == HQ_BEST) ? 1 : ((uiQuality == HQ_GOOD) ? 2 : 4);
+    unsigned int h = MchHash((unsigned int)p_X * 0x8da6b343U ^ (unsigned int)p_Y * 0xd8163841U);
+    float rot = (float)(h >> 8) * (6.28318531f / 16777216.0f);
+    float cr = _cosf(rot), sr = _sinf(rot);
+
+    float sum = 0.0f;
+    int n = 0;
+    for (int i = (int)(h & 3U) % stride; i < MCH_TAPS_MAX; i += stride)
+    {
+        float r  = MCH_TAP_RADIUS[i] * scalePx;
+        float ox = MCH_TAP_COS[i] * cr - MCH_TAP_SIN[i] * sr;
+        float oy = MCH_TAP_SIN[i] * cr + MCH_TAP_COS[i] * sr;
+        int x = p_X + (int)_floor(ox * r + 0.5f);
+        int y = p_Y + (int)_floor(oy * r + 0.5f);
+        x = x < 0 ? 0 : (x >= p_Width ? p_Width - 1 : x);
+        y = y < 0 ? 0 : (y >= p_Height ? p_Height - 1 : y);
+        sum += MchThreshold(MchDecode(_tex2D(p_TexR, x, y), uiInput), thr);
+        n += 1;
+    }
+
+    float3 lin = make_float3(MchDecode(c.x, uiInput), MchDecode(c.y, uiInput), MchDecode(c.z, uiInput));
+    float3 hal = MchHalate(lin, sum / (float)n, uiHalAmount, uiHalColour, thr);
+    if (hal.x == lin.x && hal.y == lin.y) return c;            // nothing scattered: bit exact
+    return make_float3(MchEncode(hal.x, uiInput), MchEncode(hal.y, uiInput), c.z);
+}
+
+// MarkCaptures MC Film Halation
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com

@@ -1,3 +1,5 @@
 tests/mcf_harness
 tests/mcf_enums.h
 __pycache__/
+tests/fx_grain
+tests/fx_halation

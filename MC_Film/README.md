@@ -92,6 +92,45 @@ Edit `src/MC_Film-Core.dctl.in`, never the generated `.dctl`.
 
 ---
 
+## MC Film Grain v0.1 and MC Film Halation v0.1
+
+The full film chain in Resolve:
+
+```
+[grade, DWG] -> [MC Film Halation] -> [MC Film Core  Output: Negative Cineon Log]
+             -> [MC Film Grain]     -> [MC Film Core  Input: Negative Cineon Log] -> display (or DWG)
+```
+
+Use the same Negative Stock on all Core and Grain nodes, and the same Gauge on Grain and Halation. `docs/film_look.png` shows this chain on 250D → 2383 for Super 35, Super 16 and Super 8.
+
+### MC Film Grain (`MC_Film-Grain-v0.1.dctl`), on the Cineon negative
+- **Grain model:** each dye layer is a field of real, randomly placed grains, not interpolated noise. It has no lattice, no grid pattern and an exactly known variance.
+- **Calibration:** strength follows the stock's RMS granularity, scaled with Selwyn's law to the grain size. It grows with the square root of density. Granularity figures are approximate datasheet-class values per stock.
+- **Gauge:** Super 8 / 16mm / Super 16 / Super 35 / 65mm, together with the timeline width, sets grain size and strength on screen.
+- **Colour:** the grain gets its colour from the dyes, because the print renders it.
+- **Controls:**
+  - Grain Amount and Grain Size.
+  - Grain Colour: 0 is monochrome grain, 1 gives each layer its own grain.
+  - Shadow Grain.
+  - Grain Seed. A DCTL has no frame number, so keyframe Seed linearly from 0 on the first frame to the number of frames on the last to make the grain move.
+
+### MC Film Halation (`MC_Film-Halation-v0.1.dctl`), before the negative
+- **Physics:** light scattered back through the film base re-exposes mainly the red layer, giving the red-orange glow.
+- **Redistribution, not addition:** light is moved, not added. An even field is untouched, so the stock's measured response stays calibrated; red light is conserved to within 0.05%.
+- **Gauge:** the halo is sized on the film in micrometres, so it grows on smaller gauges.
+- **Controls:**
+  - Halation Amount, Halation Size.
+  - Halation Colour: red to orange.
+  - Highlight Threshold: 0 is physical.
+  - Gauge, and Quality (32 / 64 / 128 samples).
+- **Known DCTL limit:** around very small, very bright light sources the halo shows sampling speckle on Super 16 and Super 8. Use Quality Best there. Large highlights are smooth. The OFX version will use a real multi-pass blur.
+
+### Tests
+`python3 tests/test_film_effects.py` (after `tests/test_film_core.py`) runs 32 checks, including:
+- Grain: measured RMS equals the calibrated value, zero mean, no grid pattern, gauge, seed and density laws, and no shift of the printed grey.
+- Halation: an even field is untouched, light is conserved, the halo colour, gauge scaling and the threshold.
+- Both DCTLs match the Python reference (`tools/mcfilm_effects.py`).
+
 ## Roadmap (feature parity with the commercial film suites)
 
 **DCTLs: colour, per pixel (next)**
@@ -105,9 +144,9 @@ Edit `src/MC_Film-Core.dctl.in`, never the generated `.dctl`.
 - Already done: Hue → MC HSL Editor, Skin Tone → MC Skin Guard
 
 **DCTLs or OFX: spatial**
-- Halation (gauge-dependent), Pro Mist / bloom, chromatic aberration, film resolution / acutance
+- ~~Halation~~ (MC Film Halation v0.1), Pro Mist / bloom, chromatic aberration, film resolution / acutance
 
 **OFX only: needs the frame number or multi-pass rendering**
-- Grain grown per dye layer and scaled by gauge (8 / 16 / 35 mm). It must change every frame, and a DCTL has no frame number.
+- Grain: the DCTL version is done (MC Film Grain v0.1, animated with a keyframed Seed). The OFX version will animate it per frame by itself.
 - Gate weave & breath, dust & specks, film gate (perforations, neighbouring frames), Petzval lens.
 - Licence-key activation, Windows (CUDA) and macOS (Metal) builds.

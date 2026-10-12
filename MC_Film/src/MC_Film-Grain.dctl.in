@@ -1,0 +1,223 @@
+// MarkCaptures MC Film Grain
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
+
+// ============================================================================
+//  MC_Film-Grain-v@@VERSION@@.dctl  -  MC Film Grain (on the negative)
+//  ---------------------------------------------------------------------------
+//  Film grain grown in the developed negative, per dye layer, for DaVinci
+//  Resolve Studio.  It works on the Cineon negative between two MC Film Core
+//  nodes:
+//
+//    [MC Film Core  Output: Negative Cineon Log]
+//      -> [MC Film Grain]
+//      -> [MC Film Core  Input: Negative Cineon Log]  -> print
+//
+//  Because the grain is added to the three dye densities of the negative,
+//  the print stage renders it: grain takes its colour from the dyes and its
+//  contrast from the print, the way film grain does.
+//
+//  THE GRAIN MODEL
+//  Each dye layer is a random field of grains: grains are scattered at random
+//  positions with random sizes, two per grain cell on average, and each adds
+//  or removes a smooth bump of density.  Unlike interpolated noise this has no
+//  lattice and no grid pattern, its statistics are the same everywhere, and
+//  its variance is known exactly, so the strength can be calibrated:
+//
+//    sigma(D) = RMS granularity (at 48 um) x 48 um / cell size x sqrt(D / 1.0)
+//
+//  RMS granularity is the stock's datasheet figure (approximate), scaled by
+//  Selwyn's law to the size of a grain cell, and grows with density as
+//  photographic grain does.  The cell size on the image follows from the
+//  gauge (frame width) and the timeline resolution, so 16 mm grain is bigger
+//  and stronger on screen than 35 mm grain, at any resolution.
+//
+//  DCTLs have no frame number, so the grain pattern changes when Grain Seed
+//  changes: keyframe Grain Seed linearly from 0 on the first frame to the
+//  number of frames on the last for moving grain.
+//
+//  Version : @@VERSION@@
+//  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
+//            You may use this file for personal and commercial grading work.
+//            You may not redistribute, share, sell, sublicense or publish it,
+//            in whole or in part.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+//  UI
+// ----------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(uiGrainAmount, Grain Amount, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 3.0, 0.01)
+DEFINE_UI_TOOLTIP(uiGrainAmount, "Grain strength. 1 is the stock's nominal granularity for the chosen gauge; 0 switches grain off.")
+DEFINE_UI_PARAMS(uiGrainSize, Grain Size, DCTLUI_SLIDER_FLOAT, 1.0, 0.5, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiGrainSize, "Size of the grain clumps on the film. Strength is rescaled with size so the granularity stays the stock's.")
+DEFINE_UI_PARAMS(uiGrainColour, Grain Colour, DCTLUI_SLIDER_FLOAT, 0.8, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiGrainColour, "How independent the three dye layers' grain is. 1: every layer has its own grain (colour grain), 0: one grain pattern for all layers (monochrome grain).")
+DEFINE_UI_PARAMS(uiShadowGrain, Shadow Grain, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiShadowGrain, "Grain in the thin parts of the negative (the shadows of the print) relative to the dense parts. 1 follows the density law of film.")
+DEFINE_UI_PARAMS(uiSeed, Grain Seed, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100000.0, 1.0)
+DEFINE_UI_TOOLTIP(uiSeed, "Grain pattern number. A DCTL cannot see the frame number, so for moving grain keyframe this linearly from 0 on the first frame to the number of frames on the last.")
+
+DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
+
+DEFINE_UI_PARAMS(uiNegative, Negative Stock, DCTLUI_COMBO_BOX, 1, {@@NEG_ENUMS@@}, {@@NEG_NAMES@@})
+DEFINE_UI_TOOLTIP(uiNegative, "The negative stock, for its granularity. Use the same stock as on the MC Film Core nodes.")
+DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, 3, {@@GAUGE_ENUMS@@}, {@@GAUGE_NAMES@@})
+DEFINE_UI_TOOLTIP(uiGauge, "Film format. A smaller frame is enlarged more, so its grain is bigger and stronger on screen.")
+
+
+// ----------------------------------------------------------------------------
+//  CONSTANTS
+// ----------------------------------------------------------------------------
+
+#define MCG_CINEON_BLACK    (95.0f / 1023.0f)
+#define MCG_CINEON_DPC      2.046f
+#define MCG_APERTURE_UM     48.0f        // RMS granularity measuring aperture
+#define MCG_CELL_UM         @@GRAIN_CELL_UM@@f   // nominal grain clump size on film
+#define MCG_DENSITY_FLOOR   0.05f        // grain does not vanish at base density
+// Unit-variance normalisation of the grain field: two grains per cell, radii
+// uniform in [0.5, 1] cell, bump (1 - t^2)^2, random sign.  The variance is
+// 2 * (pi / 5) * E[r^2] with E[r^2] = 7 / 12.
+#define MCG_FIELD_NORM      @@GRAIN_FIELD_NORM@@f
+// Per-layer grain size (blue-sensitive layers are fastest and coarsest).
+#define MCG_LAYER_SIZE_R    1.0f
+#define MCG_LAYER_SIZE_G    0.9f
+#define MCG_LAYER_SIZE_B    1.15f
+
+@@GRAIN_TABLES@@
+
+
+// ----------------------------------------------------------------------------
+//  HASHING  (integer, identical on every backend)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ unsigned int McgHash(unsigned int x)
+{
+    x ^= x >> 16; x *= 0x7feb352dU;
+    x ^= x >> 15; x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return x;
+}
+
+__DEVICE__ float McgUnit(unsigned int h)
+{
+    return (float)(h >> 8) * (1.0f / 16777216.0f);
+}
+
+
+// ----------------------------------------------------------------------------
+//  GRAIN FIELD
+//  Unit-variance, zero-mean random field of grains at position (x, y) in grain
+//  cell units, for one stream (layer / seed).  Each cell holds two grains; a
+//  grain's radius is at most one cell, so the 3 x 3 neighbouring cells cover
+//  every grain that can reach the point.
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float McgField(float x, float y, unsigned int stream)
+{
+    int cx = (int)_floor(x), cy = (int)_floor(y);
+    float sum = 0.0f;
+    for (int j = -1; j <= 1; ++j)
+    {
+        for (int i = -1; i <= 1; ++i)
+        {
+            unsigned int h = McgHash((unsigned int)(cx + i) * 0x8da6b343U ^
+                                     (unsigned int)(cy + j) * 0xd8163841U ^ stream);
+            for (int g = 0; g < 2; ++g)
+            {
+                h = McgHash(h + 0x9e3779b9U);
+                float gx = (float)(cx + i) + McgUnit(h);
+                h = McgHash(h);
+                float gy = (float)(cy + j) + McgUnit(h);
+                h = McgHash(h);
+                float r  = 0.5f + 0.5f * McgUnit(h);
+                float s  = (h & 1U) ? 1.0f : -1.0f;
+                float dx = x - gx, dy = y - gy;
+                float t2 = (dx * dx + dy * dy) / (r * r);
+                if (t2 < 1.0f)
+                {
+                    float b = 1.0f - t2;
+                    sum += s * b * b;
+                }
+            }
+        }
+    }
+    return sum * MCG_FIELD_NORM;
+}
+
+// Grain of one layer: a mix of the layer's own field and a field shared by
+// all layers, kept at unit variance for any mix.
+__DEVICE__ float McgLayerGrain(float px, float py, float cellPx, float layerSize,
+                               unsigned int seed, unsigned int layer, float colour)
+{
+    float c = cellPx * layerSize;
+    float own    = McgField(px / c, py / c, McgHash(seed * 4U + layer));
+    float shared = McgField(px / cellPx, py / cellPx, McgHash(seed * 4U + 3U));
+    float a = colour, b = 1.0f - colour;
+    return (a * own + b * shared) / _sqrtf(a * a + b * b);
+}
+
+
+// ----------------------------------------------------------------------------
+//  GRAIN OPERATOR  (plain arguments; what an OFX port calls per pixel)
+//    d          negative dye densities above base
+//    px, py     pixel centre in pixels
+//    footUm     size of one image pixel on the film, in micrometres
+//    granular   stock RMS granularity (at 48 um, density 1.0)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float McgSigma(float density, float sigmaCell, float shadow)
+{
+    // sqrt density law, with Shadow Grain bending it: exponent 0.5 * shadow
+    float dd = _fmaxf(density, 0.0f) + MCG_DENSITY_FLOOR;
+    return sigmaCell * _powf(dd / (1.0f + MCG_DENSITY_FLOOR), 0.5f * shadow);
+}
+
+__DEVICE__ float3 McgApplyGrain(float3 d, float px, float py, float footUm, float granular,
+                                float amount, float size, float colour, float shadow, unsigned int seed)
+{
+    float cellUm = MCG_CELL_UM * size;
+    float cellPx = cellUm / footUm;
+    // Selwyn: sigma x sqrt(area) is constant.  A cell smaller than a pixel is
+    // averaged by the pixel, so the field is evaluated at pixel size and the
+    // strength scaled down accordingly.
+    float sigmaCell = amount * granular * MCG_APERTURE_UM / cellUm;
+    if (cellPx < 1.0f) { sigmaCell *= cellPx; cellPx = 1.0f; }
+
+    float gr = McgLayerGrain(px, py, cellPx, MCG_LAYER_SIZE_R, seed, 0U, colour);
+    float gg = McgLayerGrain(px, py, cellPx, MCG_LAYER_SIZE_G, seed, 1U, colour);
+    float gb = McgLayerGrain(px, py, cellPx, MCG_LAYER_SIZE_B, seed, 2U, colour);
+    return make_float3(d.x + McgSigma(d.x, sigmaCell, shadow) * gr,
+                       d.y + McgSigma(d.y, sigmaCell, shadow) * gg,
+                       d.z + McgSigma(d.z, sigmaCell, shadow) * gb);
+}
+
+
+// ----------------------------------------------------------------------------
+//  ENTRY POINT
+// ----------------------------------------------------------------------------
+
+// NOTE: Resolve parses this declaration with a line-based matcher.  It must
+// stay on ONE line, in exactly this form, or Resolve reports "wrong argument".
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    float3 c = make_float3(p_R, p_G, p_B);
+    if (uiBypass || uiGrainAmount <= 0.0f) return c;
+
+    float3 d = make_float3((c.x - MCG_CINEON_BLACK) * MCG_CINEON_DPC, (c.y - MCG_CINEON_BLACK) * MCG_CINEON_DPC,
+                           (c.z - MCG_CINEON_BLACK) * MCG_CINEON_DPC);
+    float footUm = MCG_GAUGE_WIDTH_UM[uiGauge] / (float)p_Width;
+    unsigned int seed = (unsigned int)_floor(_fmaxf(uiSeed, 0.0f));
+
+    d = McgApplyGrain(d, (float)p_X + 0.5f, (float)p_Y + 0.5f, footUm, MCG_GRANULARITY[uiNegative],
+                      uiGrainAmount, uiGrainSize, uiGrainColour, uiShadowGrain, seed);
+
+    return make_float3(MCG_CINEON_BLACK + d.x / MCG_CINEON_DPC, MCG_CINEON_BLACK + d.y / MCG_CINEON_DPC,
+                       MCG_CINEON_BLACK + d.z / MCG_CINEON_DPC);
+}
+
+// MarkCaptures MC Film Grain
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
