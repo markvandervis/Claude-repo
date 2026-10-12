@@ -352,17 +352,22 @@ def gamut_compress(rgb):
     return np.array(out)
 
 
-def negative_density(rgb_lin, neg, exposure_stops, gamma):
+def negative_density(rgb_lin, neg, exposure_stops, gamma, film_sat=1.0):
     """Development gamma acts on log exposure around the 18 % grey exposure of
     each layer, so the stock's own toe and shoulder still bound the result and
-    18 % grey keeps its density (the print stays timed)."""
+    18 % grey keeps its density (the print stays timed).
+
+    Film saturation scales how far the three layer exposures (relative to
+    their 18 % grey exposures) spread around their mean: a grey has no spread
+    and is untouched, 0 makes every colour a grey of the same exposure."""
     raw = neg["matrix"] @ rgb_lin
-    out = []
-    for k in range(3):
-        x = math.log10(max(raw[k], 1e-10)) + exposure_stops * LOG10_2
-        mid = neg["loge_mid"][k]
-        out.append(curve_eval(neg["curves"][:, k], mid + gamma * (x - mid), NEG_LOGE_MIN, NEG_LOGE_MAX))
-    return np.array(out)
+    e = np.array([math.log10(max(raw[k], 1e-10)) + exposure_stops * LOG10_2 - neg["loge_mid"][k]
+                  for k in range(3)])
+    if film_sat != 1.0:
+        mean = e.mean()
+        e = mean + film_sat * (e - mean)
+    return np.array([curve_eval(neg["curves"][:, k], neg["loge_mid"][k] + gamma * e[k], NEG_LOGE_MIN, NEG_LOGE_MAX)
+                     for k in range(3)])
 
 
 def print_log_exposure(dens, neg, prt, lamp):
@@ -429,7 +434,45 @@ def build_tables(profile_dir):
     balance = np.array([[solve_balance(n, p, lamp, cmf) for p in prts] for n in negs])
     pivot = np.array([[print_log_exposure(negative_density(np.array([MIDGRAY] * 3), n, 0.0, 1.0), n, p, lamp)
                        + balance[i][j] for j, p in enumerate(prts)] for i, n in enumerate(negs)])
-    return {"negs": negs, "prints": prts, "balance": balance, "pivot": pivot, "lamp": lamp, "cmf": cmf}
+    for n in negs:
+        n["d_mid"] = negative_density(np.array([MIDGRAY] * 3), n, 0.0, 1.0)
+    p_mid = np.array([[print_density(pivot[i][j], p) for j, p in enumerate(prts)] for i in range(len(negs))])
+    slope = np.array([[(print_density(pivot[i][j] + 1e-3, p) - print_density(pivot[i][j] - 1e-3, p)) / 2e-3
+                       for j, p in enumerate(prts)] for i in range(len(negs))])
+    vslope = np.array([[print_visual_slope(pivot[i][j], p, cmf) for j, p in enumerate(prts)]
+                       for i in range(len(negs))])
+    dslope = np.array([[float(np.mean((print_density(pivot[i][j] + 1e-3, p) - print_density(pivot[i][j] - 1e-3, p))
+                                      / 2e-3)) for j, p in enumerate(prts)] for i in range(len(negs))])
+    return {"negs": negs, "prints": prts, "balance": balance, "pivot": pivot, "print_d_mid": p_mid,
+            "print_vslope_mid": vslope, "print_dslope_mid": dslope, "lamp": lamp, "cmf": cmf}
+
+
+def print_bleach_retime(d_mid, vslope, dslope, k, e, contrast):
+    """Neutral print log-exposure reduction that keeps 18 % grey's visual
+    density when bleach-bypass silver k * mean(D)^e is added to the print.
+    Less exposure means less dye and therefore also less silver, so solve
+        k (m - c dslope x)^e = c vslope x
+    for x with three Newton steps (m = mean dye density at 18 % grey)."""
+    if k <= 0.0:
+        return 0.0
+    m = float(np.mean(d_mid))
+    a, b = contrast * dslope, contrast * vslope
+    x = 0.0
+    for _ in range(3):
+        u = max(m - a * x, 1e-6)
+        f = k * u ** e - b * x
+        df = -k * e * a * u ** (e - 1.0) - b
+        x = x - f / df
+    return x
+
+
+def print_visual_slope(pivot, prt, cmf, delta=1e-3):
+    """Visual (Y) density gained per unit of neutral print log exposure at the
+    balanced 18 % grey: how much less exposure removes a given flat density."""
+    def vis(h):
+        y = print_xyz(print_density(h, prt), prt, cmf)[1]
+        return -math.log10(y)
+    return (vis(pivot + delta) - vis(pivot - delta)) / (2 * delta)
 
 
 def save_tables(tables, path):
@@ -450,7 +493,7 @@ def load_tables(path):
         t = json.load(f)
     for group in ("negs", "prints"):
         t[group] = [{k: (np.array(v) if isinstance(v, list) else v) for k, v in s.items()} for s in t[group]]
-    for k in ("balance", "pivot", "lamp", "cmf"):
+    for k in ("balance", "pivot", "print_d_mid", "print_vslope_mid", "print_dslope_mid", "lamp", "cmf"):
         t[k] = np.array(t[k])
     return t
 
@@ -477,9 +520,20 @@ def prepare(tables):
     return tables
 
 
+# Bleach bypass: retained metallic silver is a spectrally flat density that
+# follows the dye density of the layer stack: silver = k * mean(D)^e.
+BLEACH_MODES = {"off": (0.0, 1.0), "authentic": (0.5, 1.0), "grunge": (0.75, 1.6)}
+
+
+def silver_density(dens, k, e):
+    return 0.0 if k <= 0.0 else k * max(float(np.mean(dens)), 0.0) ** e
+
+
 def render_pixel(rgb, tables, neg_i=1, prt_i=0, encoding="IN_DWG", output="OUT_709",
                  exposure=0.0, push=0.0, printer=(0.0, 0.0, 0.0), print_exposure=0.0,
-                 neg_contrast=1.0, print_contrast=1.0, gamut=True):
+                 neg_contrast=1.0, print_contrast=1.0, gamut=True, film_sat=1.0,
+                 bleach="off", bleach_stage="print", bleach_strength=0.7, silver_contrast=1.0,
+                 preserve_mid=True):
     """Mirror of the DCTL's transform()."""
     if "lampsens" not in tables["prints"][0]:
         prepare(tables)
@@ -490,14 +544,32 @@ def render_pixel(rgb, tables, neg_i=1, prt_i=0, encoding="IN_DWG", output="OUT_7
         lin = gamut_compress(lin)
     lin = np.maximum(lin, 0.0)
     gamma = neg_contrast * push_gamma(push)
-    dens = negative_density(lin, neg, exposure, gamma)
+    kb, eb = BLEACH_MODES[bleach]
+    kb *= bleach_strength
+    eb *= silver_contrast
+    k_neg = kb if bleach_stage == "negative" else 0.0
+    k_prt = kb if bleach_stage == "print" else 0.0
+
+    dens = negative_density(lin, neg, exposure, gamma, film_sat)
+    s_neg = silver_density(dens, k_neg, eb)
     if output == "OUT_CINEON":
-        return 95.0 / 1023.0 + dens / 2.046
-    t = 10.0 ** -(neg["base"] + neg["dyes"] @ dens)
+        return 95.0 / 1023.0 + (dens + s_neg) / 2.046
+    t = 10.0 ** -(neg["base"] + neg["dyes"] @ dens + s_neg)
     log_h = np.log10(np.maximum(t @ prt["lampsens"], 1e-10))
     log_h = log_h + tables["balance"][neg_i][prt_i] + PRINTER_POINT * (np.array(printer) + print_exposure)
-    pd = print_density(log_h, prt, print_contrast, tables["pivot"][neg_i][prt_i])
-    tp = 10.0 ** -(prt["base"] + prt["dyes"] @ pd)
+    pivot = tables["pivot"][neg_i][prt_i]
+    if preserve_mid:
+        # flat silver on the negative removes the same log exposure from all
+        # three print layers: re-time by exactly that amount
+        log_h = log_h + silver_density(neg["d_mid"], k_neg, eb)
+        # silver on the print darkens 18 % grey: give the print that much
+        # less exposure, measured in visual density
+        log_h = log_h - print_bleach_retime(tables["print_d_mid"][neg_i][prt_i],
+                                            tables["print_vslope_mid"][neg_i][prt_i],
+                                            tables["print_dslope_mid"][neg_i][prt_i], k_prt, eb, print_contrast)
+    pd = print_density(log_h, prt, print_contrast, pivot)
+    s_prt = silver_density(pd, k_prt, eb)
+    tp = 10.0 ** -(prt["base"] + prt["dyes"] @ pd + s_prt)
     xyz = prt["cat"] @ (tp @ prt["viewcmf"])
     return encode_output(XYZ_TO[output] @ xyz, output)
 

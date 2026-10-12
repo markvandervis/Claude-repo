@@ -74,18 +74,41 @@ def di_encode(x):
     return np.where(x > 0.00262409, (np.log2(np.maximum(x, 1e-12) + 0.0075) + 7.0) * 0.07329248, x * 10.44426855)
 
 
-def run(img_lin, neg, prt):
+def run(img_lin, neg, prt, extra=()):
     dwg = (np.linalg.inv(m.DWG_TO_REC709) @ img_lin.reshape(-1, 3).T).T
     enc = di_encode(dwg)
     payload = "\n".join("%r %r %r" % tuple(p) for p in enc) + "\n"
-    args = ["uiNegative=%d" % neg, "uiPrint=%d" % prt]
+    args = ["uiNegative=%d" % neg, "uiPrint=%d" % prt] + list(extra)
     r = subprocess.run([HARNESS] + args, input=payload, capture_output=True, text=True, check=True)
     out = np.array([[float.fromhex(v) for v in l.split()] for l in r.stdout.splitlines()])
     return out.reshape(H, W, 3)
 
 
+FEATURES = [("250D -> 2383", []),
+            ("Bleach Authentic, print", ["uiBleach=1", "uiBleachStrength=1"]),
+            ("Bleach Grunge, print", ["uiBleach=2", "uiBleachStrength=1"]),
+            ("Bleach Authentic, negative", ["uiBleach=1", "uiBleachStage=1", "uiBleachStrength=1"]),
+            ("Film Saturation 0.6", ["uiFilmSat=0.6"]),
+            ("Film Saturation 1.4, Push +1", ["uiFilmSat=1.4", "uiPushPull=1"])]
+
+
+def sheet_of(panels, path):
+    cols = 2
+    rows = (len(panels) + 1) // 2
+    sheet = Image.new("RGB", (cols * (W + 10) + 10, rows * (H + 34) + 10), (24, 24, 24))
+    d = ImageDraw.Draw(sheet)
+    for i, (title, p) in enumerate(panels):
+        x0, y0 = 10 + (i % cols) * (W + 10), 10 + (i // cols) * (H + 34)
+        sheet.paste(Image.fromarray((np.clip(p, 0, 1) * 255 + 0.5).astype(np.uint8)), (x0, y0 + 20))
+        d.text((x0, y0 + 4), title, fill=(230, 230, 230))
+    sheet.save(path)
+    print("wrote", path)
+
+
 def main():
     img = scene()
+    neg250, p2383 = [n for _, n, _ in m.NEGATIVES].index("Kodak Vision3 250D"), 0
+    sheet_of([(t, run(img, neg250, p2383, a)) for t, a in FEATURES], os.path.join(ROOT, "docs", "features.png"))
     digital = np.clip(img, 0, 1) ** (1 / 2.4)
     names_neg = [n for _, n, _ in m.NEGATIVES]
     names_prt = [n for _, n, _ in m.PRINTS]

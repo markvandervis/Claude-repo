@@ -25,7 +25,7 @@ sys.path.insert(0, HERE)
 
 import mcfilm_model as m  # noqa: E402
 
-VERSION = "0.1"
+VERSION = "0.2"
 TABLES_JSON = os.path.join(ROOT, "data", "mcfilm_tables.json")
 TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Core.dctl.in")
 OUTPUT = os.path.join(ROOT, "MC_Film-Core-v%s.dctl" % VERSION)
@@ -78,6 +78,7 @@ def generate(t):
     tables += "#define MCF_NNEG %d\n#define MCF_NPRT %d\n\n" % (len(negs), len(prts))
     tables += c_array("MCF_NEG_MATRIX", [n["matrix"] for n in negs])
     tables += c_array("MCF_NEG_LOGE_MID", [n["loge_mid"] for n in negs])
+    tables += c_array("MCF_NEG_D_MID", [n["d_mid"] for n in negs])
     tables += c_array("MCF_NEG_CURVES", [n["curves"] for n in negs])
     tables += c_array("MCF_NEG_DYES", [n["dyes"] for n in negs])
     tables += c_array("MCF_NEG_BASE", [n["base"] for n in negs])
@@ -90,6 +91,9 @@ def generate(t):
     tables += c_array("MCF_PRT_CAT", [p["cat"] for p in prts])
     tables += c_array("MCF_BALANCE", t["balance"])
     tables += c_array("MCF_PIVOT", t["pivot"])
+    tables += c_array("MCF_PRT_D_MID", t["print_d_mid"])
+    tables += c_array("MCF_PRT_VSLOPE_MID", t["print_vslope_mid"])
+    tables += c_array("MCF_PRT_DSLOPE_MID", t["print_dslope_mid"])
 
     src = open(TEMPLATE, encoding="utf-8").read()
     subs = {
@@ -109,6 +113,10 @@ def generate(t):
         "PRINTER_POINT": repr(m.PRINTER_POINT),
         "PUSH_A": repr(m.PUSH_A),
         "PUSH_B": repr(m.PUSH_B),
+        "BLEACH_AUTH_K": repr(m.BLEACH_MODES["authentic"][0]),
+        "BLEACH_AUTH_E": repr(m.BLEACH_MODES["authentic"][1]),
+        "BLEACH_GRUNGE_K": repr(m.BLEACH_MODES["grunge"][0]),
+        "BLEACH_GRUNGE_E": repr(m.BLEACH_MODES["grunge"][1]),
         "GAMUT_THRESHOLD": repr(m.GAMUT_THRESHOLD),
         "GAMUT_LIMIT": repr(m.GAMUT_LIMIT),
         "GAMUT_POWER": repr(m.GAMUT_POWER),
