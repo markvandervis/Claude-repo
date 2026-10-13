@@ -45,7 +45,7 @@ HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
 HALO_VERSION = "0.6"
 HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % HALO_VERSION)
 SPLIT_TEMPLATE = os.path.join(ROOT, "src", "MC_Pro-Split.dctl.in")
-SPLIT_VERSION = "0.4"
+SPLIT_VERSION = "0.5"
 SPLIT_OUTPUT = os.path.join(ROOT, "MC_Pro-Split-v%s.dctl" % SPLIT_VERSION)
 
 DATA_NOTICE = """\
@@ -294,20 +294,20 @@ def generate_prosplit():
             "C4A": "%.9g" % ps._C4A, "C4B": "%.9g" % ps._C4B, "C4C": "%.9g" % ps._C4C, "C4S": "%.9g" % ps._C4S,
             "C4T": "%.9g" % ps._C4T, "CIN_BLACK": "%.9g" % ps._CIN_BLACK,
             "LUMA_R": repr(ps.LUMA[0]), "LUMA_G": repr(ps.LUMA[1]), "LUMA_B": repr(ps.LUMA[2])}
-    for k in ("MIDGRAY", "SCALE", "ZONE_CENTRE0", "ZONE_STEP", "BLACK_WIDTH", "BLACK_TOP", "WHITE_START",
-              "WHITE_WIDTH", "SAT_CHROMA"):
+    for k in ("MIDGRAY", "SCALE", "ZONE_CENTRE0", "ZONE_STEP", "ZONE_TAU", "CLEAN_HEIGHT", "CLEAN_POWER",
+              "CLEAN_MIN_STOPS", "SAT_CHROMA"):
         subs[k] = repr(getattr(ps, k))
     lines = []
     for zone, var in zip(("Hi", "Hi-Mid", "Mid", "Lo-Mid", "Lo"), ("Hi", "HiMid", "Mid", "LoMid", "Lo")):
         for ch, name in (("R", "Red"), ("G", "Green"), ("B", "Blue")):
             v = "ui%s%s" % (var, ch)
             lines.append("DEFINE_UI_PARAMS(%s, %s %s, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)" % (v, zone, name))
-            lines.append('DEFINE_UI_TOOLTIP(%s, "%s offset in the %s zone (%s): + more %s, - less. 100 is about half '
-                         'a stop.")' % (v, name, zone, {"Hi": "centred 4 stops above the Pivot",
-                                                      "Hi-Mid": "centred 2 stops above the Pivot",
+            lines.append('DEFINE_UI_TOOLTIP(%s, "%s offset in the %s zone (%s): + more %s, - less. The zones overlap '
+                         'broadly; -100 on Lo moves the shadows about 1.3 stops.")' % (v, name, zone, {"Hi": "centred 2.5 stops above the Pivot",
+                                                      "Hi-Mid": "centred 1.25 stops above the Pivot",
                                                       "Mid": "centred on the Pivot",
-                                                      "Lo-Mid": "centred 2 stops below the Pivot",
-                                                      "Lo": "centred 4 stops below the Pivot"}[zone], name.lower()))
+                                                      "Lo-Mid": "centred 1.25 stops below the Pivot",
+                                                      "Lo": "centred 2.5 stops below the Pivot"}[zone], name.lower()))
     subs["ZONE_UI"] = "\n".join(lines)
     return fill(SPLIT_TEMPLATE, SPLIT_OUTPUT, subs)
 

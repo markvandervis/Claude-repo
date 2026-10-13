@@ -10,22 +10,31 @@ worked on as DaVinci Intermediate.
 
     stop = TF(0.36) - TF(0.18)                      code values per stop
     x    = (luma(y) - TF(0.18 x 2^pivot)) / stop    brightness in stops
-    Five zones, Lo / Lo-Mid / Mid / Hi-Mid / Hi, centred at -4, -2, 0, +2, +4
-    stops.  Between two neighbouring centres the zone offsets blend with a
-    smoothstep, outside the ends the end zone holds, so the weights always sum
-    to 1 (the same setting on all five zones is a plain offset):
-        o(x) = (1 - f) Z_i + f Z_i+1
-    y' = y + SCALE x Blend x o(x) x clean(x) x satmask
+    Five broad, overlapping zones, Lo / Lo-Mid / Mid / Hi-Mid / Hi, between
+    four soft boundaries at -1.875, -0.625, +0.625, +1.875 stops (logistic,
+    width tau = 1.5 stops):
+        F_j = 1 / (1 + exp(-(x - b_j) / tau))
+        w_Lo = 1 - F_1, w_LoMid = F_1 - F_2, ..., w_Hi = F_4
+    so the weights always sum to 1 (the same setting on all five zones is a
+    plain offset), every zone peaks at its own centre, and each reaches well
+    into its neighbours.
+    y' = y + SCALE stop x slider / 100 x w x Blend x clean(x) x satmask
+
+    The zone width and strength and the Clean Blacks law were fitted to curve
+    measurements of a reference RGB split tone (Lo -100 at Clean Blacks 51,
+    67 and 100): within about 0.005 code value.
 
     Neutral Pivot  removes the tint (zero-sum part) of the Mid zone, so the
                    pivot grey only gets lighter or darker, never coloured
-    Clean Blacks   fades the toning out towards black
-    Clean Whites   fades it out towards the brightest highlights
+    Clean Blacks   fades the toning in from the transfer function's black over
+                   H = 10 (slider / 100)^1.7 stops (smoothstep): 100 = clean
+                   up to about +5 stops, 50 = about 3 stops above black
+    Clean Whites   the same, down from code value 1.0
     Sat Mask       fades it out on saturated colours (tones the neutrals)
 
-The weights change by at most 0.75 per stop, and SCALE keeps the offset's
-change per stop below the change of the brightness itself, so a grey ramp
-can never reverse.
+A Clean fade is never made steeper than CLEAN_MIN_STOPS (below that the
+slider lowers its strength instead), so a grey ramp does not reverse for any
+single zone or same-direction settings.
 """
 
 import math
@@ -34,15 +43,12 @@ import numpy as np
 
 STOP = 0.07329248             # DaVinci Intermediate log per stop (above the toe)
 MIDGRAY = 0.18
-SCALE = 0.464                 # offset in stops at a zone slider of 100 (about half a stop)
+SCALE = 1.8                   # offset in stops at zone weight 1 and slider 100
 ZONES = ("Lo", "Lo-Mid", "Mid", "Hi-Mid", "Hi")
-ZONE_CENTRE0, ZONE_STEP = -4.0, 2.0
-# Clean Blacks fades from the transfer function's black (TF(0)) up over
-# BLACK_WIDTH stops, but never above BLACK_TOP stops (for curves whose black
-# sits close to grey on the log scale); Clean Whites from WHITE_START stops.
-BLACK_WIDTH = 2.5
-BLACK_TOP = -1.0
-WHITE_START, WHITE_WIDTH = 2.5, 2.5
+ZONE_CENTRE0, ZONE_STEP = -2.5, 1.25    # nominal centres (boundaries half way between)
+ZONE_TAU = 1.5
+CLEAN_HEIGHT, CLEAN_POWER = 9.97, 1.7   # fade height in stops = H (slider / 100)^P
+CLEAN_MIN_STOPS = 3.0                   # never steeper than this; below it the strength drops
 SAT_CHROMA = 0.08             # chroma (log) at which Sat Mask is fully on
 LUMA = (0.30, 0.60, 0.10)
 
@@ -141,11 +147,26 @@ def from_work(y, enc):
     return np.array(y)
 
 
+def _logistic(t):
+    return 1.0 / (1.0 + math.exp(-t)) if t > -60.0 else 0.0
+
+
+def zone_weights(x):
+    f = [_logistic((x - (ZONE_CENTRE0 + ZONE_STEP * (j + 0.5))) / ZONE_TAU) for j in range(4)]
+    return np.array([1.0 - f[0], f[0] - f[1], f[1] - f[2], f[2] - f[3], f[3]])
+
+
 def zone_offset(x, zones):
-    t = min(max((x - ZONE_CENTRE0) / ZONE_STEP, 0.0), 4.0)
-    i = min(int(math.floor(t)), 3)
-    f = smooth01(t - i)
-    return (1.0 - f) * zones[i] + f * zones[i + 1]
+    return zone_weights(x) @ zones
+
+
+def clean(d, amount):
+    """fade-in weight at d stops from the black (or white) end"""
+    if amount <= 0.0:
+        return 1.0
+    h = CLEAN_HEIGHT * (amount / 100.0) ** CLEAN_POWER
+    k = min(1.0, h / CLEAN_MIN_STOPS)
+    return 1.0 - k * (1.0 - smooth01(d / max(h, CLEAN_MIN_STOPS)))
 
 
 def tone(y, p, tf="TF_DI"):
@@ -158,9 +179,8 @@ def tone(y, p, tf="TF_DI"):
     x = (float(np.dot(LUMA, y)) - piv) / stop
     o = zone_offset(x, zones) * (stop / 100.0)
     w = p["blend"] / 100.0
-    x_black = min((black - piv) / stop, BLACK_TOP - BLACK_WIDTH)
-    w *= 1.0 - p["clean_blacks"] / 100.0 * (1.0 - smooth01((x - x_black) / BLACK_WIDTH))
-    w *= 1.0 - p["clean_whites"] / 100.0 * smooth01((x - WHITE_START) / WHITE_WIDTH)
+    w *= clean(x - (black - piv) / stop, p["clean_blacks"])
+    w *= clean((1.0 - piv) / stop - x, p["clean_whites"])
     if p["sat_mask"] > 0.0:
         m = float(np.linalg.norm(y - y.mean()))
         w *= 1.0 - p["sat_mask"] / 100.0 * smooth01(m / (SAT_CHROMA * stop / STOP))

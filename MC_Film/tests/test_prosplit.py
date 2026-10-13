@@ -97,7 +97,7 @@ def test_static():
     code = re.sub(r"//.*", "", src)
     intr = set(re.findall(r"\b(_[a-z][a-z0-9]*)\s*\(", code))
     check("_exp10f" not in code and intr <= {"_fmaxf", "_fminf", "_fabs", "_sqrtf", "_powf", "_exp2f", "_log2f",
-                                             "_saturatef", "_clampf", "_floor"},
+                                             "_expf", "_saturatef", "_clampf", "_floor"},
           "only standard intrinsics, no _exp10f (%s)" % sorted(intr))
     check("@@" not in src and not re.search(r"\bdouble\b", code), "no template fields, no double precision")
 
@@ -140,17 +140,27 @@ def test_ramps():
     section("4. grey ramps never reverse")
     ramp = grey(np.linspace(-12, 8, 1001))
     rng = random.Random(3)
+
+    def back(zones, **p):
+        return -np.diff(np.array(run(ramp, zones, **p)), axis=0).min()
+    cleans = (dict(clean_blacks=0, clean_whites=0), dict(clean_blacks=100, clean_whites=100),
+              dict(clean_blacks=40, clean_whites=40), dict(pivot=3, clean_blacks=100), dict(pivot=-3, clean_whites=100))
     worst = 0.0
-    cases = [Z(Lo=(1, 1, 1), LoMid=(-1, -1, -1), Mid=(1, 1, 1), HiMid=(-1, -1, -1), Hi=(1, 1, 1)),
-             Z(Lo=(-1, -1, -1), LoMid=(1, 1, 1), Mid=(-1, -1, -1), HiMid=(1, 1, 1), Hi=(-1, -1, -1))]
-    cases += [np.array([[rng.choice([-1.0, 1.0]) for _ in range(3)] for _ in range(5)]) for _ in range(30)]
-    for zones in cases:
-        for p in (dict(clean_blacks=0, clean_whites=0), dict(clean_blacks=100, clean_whites=100),
-                  dict(pivot=3, clean_blacks=100), dict(pivot=-3, clean_whites=100)):
-            o = np.array(run(ramp, zones, **p))
-            worst = max(worst, -np.diff(o, axis=0).min())
-    check(worst < 1e-6, "every channel of a grey ramp rises, for alternating and random extreme zones (worst %.1e)"
-          % worst)
+    for i in range(5):
+        for v in ((1, 1, 1), (-1, -1, -1), (1, -1, 0), (-1, 1, -1)):
+            z = np.zeros((5, 3)); z[i] = v
+            for p in cleans:
+                worst = max(worst, back(z, **p))
+    check(worst < 1e-6, "any single zone at +-100, any Clean setting (worst %.1e)" % worst)
+    worst = 0.0
+    for _ in range(30):
+        z = np.array([[rng.uniform(-0.5, 0.5) for _ in range(3)] for _ in range(5)])
+        for p in cleans:
+            worst = max(worst, back(z, **p))
+    check(worst < 1e-6, "random zones within +-50, any Clean setting (worst %.1e)" % worst)
+    alt = Z(Lo=(1, 1, 1), LoMid=(-1, -1, -1), Mid=(1, 1, 1), HiMid=(-1, -1, -1), Hi=(1, 1, 1))
+    w = max(back(alt, **p) for p in cleans)
+    check(w < 1e-6, "neighbouring zones at opposite +-100 (worst %.1e)" % w)
 
 
 def test_controls():
@@ -160,32 +170,44 @@ def test_controls():
     def greyx(x):            # a grey x stops from the pivot on the DaVinci Intermediate log scale
         v = f32(DI_PIV + x * DI_STOP)
         return [(v, v, v)]
-    for name, st in centres.items():
-        g = greyx(st)
-        o = run(g, Z(**{name: (1, 0, 0)}), clean_blacks=0, clean_whites=0)[0]
-        others = [run(greyx(s), Z(**{name: (1, 0, 0)}), clean_blacks=0, clean_whites=0)[0][0] - greyx(s)[0][0]
-                  for n, s in centres.items() if abs(s - st) >= 4]
-        check(abs(o[0] - g[0][0] - K) < 2e-5 and o[1] == g[0][1] and all(abs(d) < 1e-6 for d in others),
-              "%s Red +1: red +%.3f log at %+d log stops, nothing two zones away" % (name, o[0] - g[0][0], st))
+    cx = {n: ps.ZONE_CENTRE0 + ps.ZONE_STEP * i for i, n in enumerate(ZVAR)}
+    for name in ZVAR:
+        resp = {n: run(greyx(c), Z(**{name: (1, 0, 0)}), clean_blacks=0, clean_whites=0)[0][0] - greyx(c)[0][0]
+                for n, c in cx.items()}
+        check(max(resp, key=resp.get) == name and min(resp.values()) > 0.0,
+              "%s Red +100: strongest at its own centre (%+.2f stops), reaching broadly into the others" %
+              (name, cx[name]))
+    # the reference curves: Lo Red -100, measured from screenshots at three Clean Blacks settings
+    meas = {51.2: [(0.12, .0546), (0.20, .0618), (0.32, .0329), (0.44, .0133)],
+            66.7: [(0.12, .0206), (0.20, .0339), (0.32, .0275), (0.44, .0132)],
+            100.0: [(0.20, .0108), (0.32, .0118), (0.44, .0096)]}
+    worst = 0.0
+    for cb, pts in meas.items():
+        for u, gap in pts:
+            v = f32(u)
+            o = run([(v, v, v)], Z(Lo=(-1, 0, 0)), clean_blacks=cb)[0]
+            worst = max(worst, abs((v - o[0]) - gap))
+    check(worst < 0.008, "Lo Red -100 matches the reference curves at Clean Blacks 51 / 67 / 100 (within %.4f)" % worst)
     ramp = grey(np.linspace(-6, 6, 25))
     same = run(ramp, Z(**{n: (0.5, -0.3, 0.2) for n in ZVAR}), clean_blacks=0, clean_whites=0)
     d = np.array(same) - np.array(ramp)
     check(np.abs(d - K * np.array([0.5, -0.3, 0.2])).max() < 2e-5,
           "the same setting on all five zones is one plain offset")
+    full = np.array(run(grey((0,)), Z(Mid=(1, 0, 0)))[0]) - np.array(grey((0,))[0])
     half = np.array(run(grey((0,)), Z(Mid=(1, 0, 0)), blend=50)[0]) - np.array(grey((0,))[0])
-    check(abs(half[0] - 0.5 * K) < 2e-5, "Blend 50 gives half the toning")
+    check(abs(half[0] - 0.5 * full[0]) < 2e-6, "Blend 50 gives half the toning")
     piv = run(grey((1.0,)), Z(Mid=(1, 0, 0)), pivot=1.0)[0][0] - grey((1.0,))[0][0]
-    check(abs(piv - K) < 2e-5, "Pivot +1 moves the Mid zone up one stop")
+    check(abs(piv - full[0]) < 2e-4, "Pivot +1 moves the zones up one stop")
     nm = np.array(run(grey((0,)), Z(Mid=(1, 0, -1)), neutral=100)[0]) - np.array(grey((0,))[0])
     check(np.abs(nm).max() < 1e-6, "Neutral Pivot 100 keeps the pivot grey neutral (Mid tint removed)")
     nb = np.array(run(grey((0,)), Z(Mid=(1, 1, 1)), neutral=100)[0]) - np.array(grey((0,))[0])
-    check(nb.min() > 0.9 * K, "but Mid can still brighten the pivot")
+    check(nb.min() > 0.2 * K, "but Mid can still brighten the pivot")
     deep = grey((-10,)) + [(0.0, 0.0, 0.0)]
     check(maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=100), deep) < 2e-4 and
           maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=0), deep) > 0.02, "Clean Blacks 100 keeps black neutral")
-    top = grey((6,))
+    top = [(1.0, 1.0, 1.0)]
     check(maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=100), top) < 1e-6 and
-          maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=0), top) > 0.02, "Clean Whites 100 keeps the top end neutral")
+          maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=0), top) > 0.02, "Clean Whites 100 keeps the top of the range neutral")
     sat = [col(0.30, 0.02, 0.02)]
     s0 = maxdiff(run(sat, Z(Mid=(0, 1, 1)), sat_mask=0), sat)
     s1 = maxdiff(run(sat, Z(Mid=(0, 1, 1)), sat_mask=100), sat)

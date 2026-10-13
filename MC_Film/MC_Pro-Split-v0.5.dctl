@@ -3,7 +3,7 @@
 // www.markcaptures.com
 
 // ============================================================================
-//  MC_Pro-Split-v0.4.dctl  -  MC Pro Split (RGB split tone, five zones)
+//  MC_Pro-Split-v0.5.dctl  -  MC Pro Split (RGB split tone, five zones)
 //  ---------------------------------------------------------------------------
 //  An RGB split tone for DaVinci Resolve Studio, part of the MC Film suite:
 //  a red, green and blue offset for each of five tonal zones - Hi, Hi-Mid,
@@ -15,21 +15,22 @@
 //  exposure shift of that channel; Scene Linear is worked on as DaVinci
 //  Intermediate.  With x the pixel's brightness in stops from the Pivot (one
 //  stop = TF(0.36) - TF(0.18) code values, middle grey = TF(0.18)), the
-//  zones are centred at -4, -2, 0, +2 and +4 stops; between two neighbouring
-//  centres their offsets blend with a smoothstep, and beyond the ends the end
-//  zone holds, so the zone weights always sum to 1 (the same setting on all
-//  five zones is a plain offset):
+//  five zones are broad and overlap: they lie between four soft (logistic,
+//  1.5 stops wide) boundaries at -1.875, -0.625, +0.625 and +1.875 stops, so
+//  the weights always sum to 1 and the same setting on all five zones is a
+//  plain offset:
 //
-//      o(x) = (1 - f) Z_i + f Z_i+1
-//      y'   = y + 0.464 stop x slider / 100 x Blend x clean x sat mask
+//      o(x) = sum w_i(x) Z_i
+//      y'   = y + 1.8 stop x slider / 100 x Blend x clean x sat mask
 //
 //  Neutral Pivot removes the tint of the Mid zone (the pivot grey can only
 //  get lighter or darker); Clean Blacks and Clean Whites fade the toning out
 //  towards black and the brightest highlights; Sat Mask keeps it off
 //  saturated colours.
 //
-//  The zone weights change by at most 0.75 per stop and the offsets are
-//  small enough that a grey ramp can never reverse.  With every zone at 0
+//  Zone width, strength and the Clean Blacks law follow curve measurements of
+//  a reference RGB split tone.  A grey ramp does not reverse for any single
+//  zone or same-direction settings.  With every zone at 0
 //  (or Blend 0) the node returns its input bit exact.
 //
 //  POWER GRADE ORDER (DaVinci Wide Gamut)
@@ -37,7 +38,7 @@
 //      -> [MC Pro Split  Transfer Function: DaVinci Intermediate]
 //      -> [CST DWG / DaVinci Intermediate -> Rec.709]
 //
-//  Version : 0.4
+//  Version : 0.5
 //  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
 //            You may use this file for personal and commercial grading work.
 //            You may not redistribute, share, sell, sublicense or publish it,
@@ -50,35 +51,35 @@
 // ----------------------------------------------------------------------------
 
 DEFINE_UI_PARAMS(uiHiR, Hi Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHiR, "Red offset in the Hi zone (centred 4 stops above the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiHiR, "Red offset in the Hi zone (centred 2.5 stops above the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiHiG, Hi Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHiG, "Green offset in the Hi zone (centred 4 stops above the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiHiG, "Green offset in the Hi zone (centred 2.5 stops above the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiHiB, Hi Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHiB, "Blue offset in the Hi zone (centred 4 stops above the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiHiB, "Blue offset in the Hi zone (centred 2.5 stops above the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiHiMidR, Hi-Mid Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHiMidR, "Red offset in the Hi-Mid zone (centred 2 stops above the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiHiMidR, "Red offset in the Hi-Mid zone (centred 1.25 stops above the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiHiMidG, Hi-Mid Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHiMidG, "Green offset in the Hi-Mid zone (centred 2 stops above the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiHiMidG, "Green offset in the Hi-Mid zone (centred 1.25 stops above the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiHiMidB, Hi-Mid Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHiMidB, "Blue offset in the Hi-Mid zone (centred 2 stops above the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiHiMidB, "Blue offset in the Hi-Mid zone (centred 1.25 stops above the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiMidR, Mid Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiMidR, "Red offset in the Mid zone (centred on the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiMidR, "Red offset in the Mid zone (centred on the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiMidG, Mid Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiMidG, "Green offset in the Mid zone (centred on the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiMidG, "Green offset in the Mid zone (centred on the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiMidB, Mid Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiMidB, "Blue offset in the Mid zone (centred on the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiMidB, "Blue offset in the Mid zone (centred on the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiLoMidR, Lo-Mid Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiLoMidR, "Red offset in the Lo-Mid zone (centred 2 stops below the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiLoMidR, "Red offset in the Lo-Mid zone (centred 1.25 stops below the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiLoMidG, Lo-Mid Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiLoMidG, "Green offset in the Lo-Mid zone (centred 2 stops below the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiLoMidG, "Green offset in the Lo-Mid zone (centred 1.25 stops below the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiLoMidB, Lo-Mid Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiLoMidB, "Blue offset in the Lo-Mid zone (centred 2 stops below the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiLoMidB, "Blue offset in the Lo-Mid zone (centred 1.25 stops below the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiLoR, Lo Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiLoR, "Red offset in the Lo zone (centred 4 stops below the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiLoR, "Red offset in the Lo zone (centred 2.5 stops below the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiLoG, Lo Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiLoG, "Green offset in the Lo zone (centred 4 stops below the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiLoG, "Green offset in the Lo zone (centred 2.5 stops below the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiLoB, Lo Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiLoB, "Blue offset in the Lo zone (centred 4 stops below the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_TOOLTIP(uiLoB, "Blue offset in the Lo zone (centred 2.5 stops below the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiBlend, Blend, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiBlend, "Strength of the whole split tone, in percent.")
 DEFINE_UI_PARAMS(uiPivot, Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
@@ -86,16 +87,16 @@ DEFINE_UI_TOOLTIP(uiPivot, "Centre of the Mid zone, in stops from 18 % grey. All
 DEFINE_UI_PARAMS(uiNeutral, Neutral Pivot, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiNeutral, "Keeps the pivot grey neutral: removes this percentage of the Mid zone's tint, so Mid can only brighten or darken.")
 DEFINE_UI_PARAMS(uiCleanBlacks, Clean Blacks, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiCleanBlacks, "Fades the toning out towards black, in percent (100 = neutral blacks). The fade starts about 2.5 stops below the Pivot.")
+DEFINE_UI_TOOLTIP(uiCleanBlacks, "How far up from black the toning is faded out: 100 keeps it clean up to about 5 stops above middle grey, 50 about 3 stops above black. Black itself is always kept neutral.")
 DEFINE_UI_PARAMS(uiCleanWhites, Clean Whites, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiCleanWhites, "Fades the toning out towards the brightest highlights, in percent (100 = neutral whites from 5 stops above the Pivot).")
+DEFINE_UI_TOOLTIP(uiCleanWhites, "How far down from the top of the range (code value 1.0) the toning is faded out, the same way as Clean Blacks.")
 DEFINE_UI_PARAMS(uiSatMask, Sat Mask, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiSatMask, "Keeps the toning off saturated colours, in percent: at 100 only the neutrals and soft colours are toned.")
 
 DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
 DEFINE_UI_PARAMS(uiShowCurves, Show Curves, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_TOOLTIP(uiShowCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input code value left to right, output bottom to top), with the diagonal, the middle grey (Pivot) line and the zone centres.")
+DEFINE_UI_TOOLTIP(uiShowCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input code value left to right, output bottom to top), with the diagonal, the middle grey (Pivot) line and the zone centres. Where curves overlap their colours add up: green + blue = cyan, all three = white.")
 DEFINE_UI_PARAMS(uiShowSatMask, Highlight Sat Mask, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiShowSatMask, "Shows the picture in grey with the colours that Sat Mask keeps out of the toning painted magenta.")
 DEFINE_UI_PARAMS(uiShowRamp, Show Ramp, DCTLUI_CHECK_BOX, 0)
@@ -111,14 +112,14 @@ DEFINE_UI_TOOLTIP(uiInput, "Log curve of this node's input; it sets where middle
 
 #define MCP_STOP          0.07329248f
 #define MCP_MIDGRAY       0.18f
-#define MCP_SCALE         0.464f
-#define MCP_ZONE_C0       (-4.0f)
-#define MCP_ZONE_STEP     2.0f
-#define MCP_BLACK_WIDTH   2.5f
-#define MCP_BLACK_TOP     (-1.0f)
+#define MCP_SCALE         1.8f
+#define MCP_ZONE_C0       (-2.5f)
+#define MCP_ZONE_STEP     1.25f
+#define MCP_ZONE_TAU      1.5f
+#define MCP_CLEAN_HEIGHT  9.97f
+#define MCP_CLEAN_POWER   1.7f
+#define MCP_CLEAN_MIN     3.0f
 #define MCP_LOG10_2       0.30102999566f
-#define MCP_WHITE_START   2.5f
-#define MCP_WHITE_WIDTH   2.5f
 #define MCP_SAT_CHROMA    0.08f
 
 
@@ -198,17 +199,35 @@ __DEVICE__ float3 McpLerp3(float3 a, float3 b, float f)
     return make_float3(a.x + f * (b.x - a.x), a.y + f * (b.y - a.y), a.z + f * (b.z - a.z));
 }
 
-// Zone offset at x stops from the pivot: z0 = Lo .. z4 = Hi.
+// Zone offset at x stops from the pivot: z0 = Lo .. z4 = Hi.  Broad,
+// overlapping zones between four soft (logistic) boundaries half way between
+// the nominal centres: the weights always sum to 1.
+__DEVICE__ float McpLogistic(float t)
+{
+    return 1.0f / (1.0f + _expf(-_clampf(t, -60.0f, 60.0f)));
+}
+
 __DEVICE__ float3 McpZoneOffset(float x, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4)
 {
-    float t = _clampf((x - MCP_ZONE_C0) / MCP_ZONE_STEP, 0.0f, 4.0f);
-    int i = (int)_floor(t);
-    if (i > 3) i = 3;
-    float f = McpSmooth01(t - (float)i);
-    if (i == 0) return McpLerp3(z0, z1, f);
-    if (i == 1) return McpLerp3(z1, z2, f);
-    if (i == 2) return McpLerp3(z2, z3, f);
-    return McpLerp3(z3, z4, f);
+    float f0 = McpLogistic((x - (MCP_ZONE_C0 + 0.5f * MCP_ZONE_STEP)) / MCP_ZONE_TAU);
+    float f1 = McpLogistic((x - (MCP_ZONE_C0 + 1.5f * MCP_ZONE_STEP)) / MCP_ZONE_TAU);
+    float f2 = McpLogistic((x - (MCP_ZONE_C0 + 2.5f * MCP_ZONE_STEP)) / MCP_ZONE_TAU);
+    float f3 = McpLogistic((x - (MCP_ZONE_C0 + 3.5f * MCP_ZONE_STEP)) / MCP_ZONE_TAU);
+    float w0 = 1.0f - f0, w1 = f0 - f1, w2 = f1 - f2, w3 = f2 - f3, w4 = f3;
+    return make_float3(w0 * z0.x + w1 * z1.x + w2 * z2.x + w3 * z3.x + w4 * z4.x,
+                       w0 * z0.y + w1 * z1.y + w2 * z2.y + w3 * z3.y + w4 * z4.y,
+                       w0 * z0.z + w1 * z1.z + w2 * z2.z + w3 * z3.z + w4 * z4.z);
+}
+
+// Clean Blacks / Whites: the toning fades in over H = 10 (slider / 100)^1.7
+// stops from the black (or white) end, d stops away from it.  The fade is
+// never steeper than MCP_CLEAN_MIN stops; below that the strength drops.
+__DEVICE__ float McpClean(float d, float amount)
+{
+    if (amount <= 0.0f) return 1.0f;
+    float h = MCP_CLEAN_HEIGHT * _powf(amount * 0.01f, MCP_CLEAN_POWER);
+    float k = _fminf(1.0f, h / MCP_CLEAN_MIN);
+    return 1.0f - k * (1.0f - McpSmooth01(d / _fmaxf(h, MCP_CLEAN_MIN)));
 }
 
 // Sat Mask weight of a pixel: 1 = toned, 0 = kept out.
@@ -230,9 +249,8 @@ __DEVICE__ float3 McpTone(float3 y, float3 z0, float3 z1, float3 z2, float3 z3, 
     float x = (lum - t.x) / t.y;
     float3 o = McpZoneOffset(x, z0, z1, z2, z3, z4);
     float w = g.x * 0.01f;
-    float xb = _fminf(t.z, MCP_BLACK_TOP - MCP_BLACK_WIDTH);
-    w *= 1.0f - g.z * 0.01f * (1.0f - McpSmooth01((x - xb) / MCP_BLACK_WIDTH));
-    w *= 1.0f - g.w * 0.01f * McpSmooth01((x - MCP_WHITE_START) / MCP_WHITE_WIDTH);
+    w *= McpClean(x - t.z, g.z);
+    w *= McpClean((1.0f - t.x) / t.y - x, g.w);
     w *= McpSatKeep(y, t.y, satMask);
     float k = MCP_SCALE * t.y * 0.01f * w;
     return make_float3(y.x + k * o.x, y.y + k * o.y, y.z + k * o.z);
@@ -251,9 +269,12 @@ __DEVICE__ float4 McpCurves(int px, int py, int w, int h, float3 z0, float3 z1, 
     float3 c0 = McpTone(make_float3(u0, u0, u0), z0, z1, z2, z3, z4, t, g, satMask);
     float3 c1 = McpTone(make_float3(u0 + du, u0 + du, u0 + du), z0, z1, z2, z3, z4, t, g, satMask);
     float kr = (c1.x - c0.x) / du * asp, kg = (c1.y - c0.y) / du * asp, kb = (c1.z - c0.z) / du * asp;
-    if (_fabs(v - c0.x) / dv < 3.0f * lw * _sqrtf(1.0f + kr * kr)) return make_float4(0.75f, 0.12f, 0.12f, 1.0f);
-    if (_fabs(v - c0.y) / dv < 3.0f * lw * _sqrtf(1.0f + kg * kg)) return make_float4(0.15f, 0.70f, 0.15f, 1.0f);
-    if (_fabs(v - c0.z) / dv < 3.0f * lw * _sqrtf(1.0f + kb * kb)) return make_float4(0.20f, 0.30f, 0.85f, 1.0f);
+    // the three curves add up where they overlap: green + blue = cyan, all three = white
+    float onR = (_fabs(v - c0.x) / dv < 3.0f * lw * _sqrtf(1.0f + kr * kr)) ? 1.0f : 0.0f;
+    float onG = (_fabs(v - c0.y) / dv < 3.0f * lw * _sqrtf(1.0f + kg * kg)) ? 1.0f : 0.0f;
+    float onB = (_fabs(v - c0.z) / dv < 3.0f * lw * _sqrtf(1.0f + kb * kb)) ? 1.0f : 0.0f;
+    if (onR + onG + onB > 0.0f)
+        return make_float4(0.08f + 0.84f * onR, 0.08f + 0.84f * onG, 0.08f + 0.84f * onB, 1.0f);
     if (_fabs(v - u0) / dv < 2.2f * lw * _sqrtf(1.0f + asp * asp)) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
     if (_fabs(u0 - t.x) < 2.5f * lw * du) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
     for (int i = 0; i < 5; ++i)
