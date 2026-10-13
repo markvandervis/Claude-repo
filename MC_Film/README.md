@@ -161,9 +161,9 @@ They sit in the full film chain shown above (Halation before MC Film Negative, G
 - Halation: an even field is untouched, nothing ever darkens, no cyan cores on any gauge, the halo colour, gauge scaling and the threshold.
 - Both DCTLs match the Python reference (`tools/mcfilm_effects.py`).
 
-## MC Pro Split v0.8 (RGB split tone, five zones)
+## MC Pro Split v0.9 (RGB split tone, five zones)
 
-`MC_Pro-Split-v0.8.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It is made to sit in a PowerGrade, and it will be part of the OFX plugin.
+`MC_Pro-Split-v0.9.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It is made to sit in a PowerGrade, and it will be part of the OFX plugin.
 
 **PowerGrade order (DaVinci Wide Gamut):**
 
@@ -185,7 +185,7 @@ The five zones are broad and overlap. They lie between four soft boundaries at �
 
 | Control | What it does |
 |---|---|
-| Hi / Hi-Mid / Mid / Lo-Mid / Lo 🔴 🟢 🔵 | Offset per channel per zone, −100 to +100 (Lo / Hi at 100 ≈ 1.3–1.8 stops towards the ends, the inner zones ≈ 0.4 stop at their centre) |
+| Hi / Hi-Mid / Mid / Lo-Mid / Lo 🟥 🟩 🟦 | Offset per channel per zone, −100 to +100 (Lo / Hi at 100 ≈ 1.3–1.8 stops towards the ends, the inner zones ≈ 0.4 stop at their centre) |
 | Blend | Strength of the whole split tone, in % |
 | Pivot | Centre of the Mid zone in stops from middle grey; all zones move with it |
 | Neutral Pivot | Keeps a band around the Pivot neutral; the higher, the wider (31.8 fades back in over about 2 stops either side) |
@@ -208,7 +208,7 @@ The full feature-by-feature status is in `docs/FEATURES.md`.
 
 **DCTLs: colour, per pixel (next)**
 - ~~Bleach Bypass~~ (done in Core v0.2)
-- ~~Cast & Crossover~~ (done: MC Pro Split v0.8, an RGB split tone in five zones)
+- ~~Cast & Crossover~~ (done: MC Pro Split v0.9, an RGB split tone in five zones)
 - ~~Film Sat~~ (done in Core v0.2), Tone Core, Curves
 - Palette (harmoniser)
 - Balance (skin-driven white balance and exposure; reuses the MC Skin Guard qualifier)

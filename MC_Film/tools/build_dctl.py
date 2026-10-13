@@ -45,7 +45,7 @@ HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
 HALO_VERSION = "0.6"
 HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % HALO_VERSION)
 SPLIT_TEMPLATE = os.path.join(ROOT, "src", "MC_Pro-Split.dctl.in")
-SPLIT_VERSION = "0.8"
+SPLIT_VERSION = "0.9"
 SPLIT_OUTPUT = os.path.join(ROOT, "MC_Pro-Split-v%s.dctl" % SPLIT_VERSION)
 
 DATA_NOTICE = """\
@@ -299,7 +299,7 @@ def generate_prosplit():
         subs[k] = repr(getattr(ps, k))
     lines = []
     for zone, var in zip(("Hi", "Hi-Mid", "Mid", "Lo-Mid", "Lo"), ("Hi", "HiMid", "Mid", "LoMid", "Lo")):
-        for ch, name, dot in (("R", "Red", "\U0001F534"), ("G", "Green", "\U0001F7E2"), ("B", "Blue", "\U0001F535")):
+        for ch, name, dot in (("R", "Red", "\U0001F7E5"), ("G", "Green", "\U0001F7E9"), ("B", "Blue", "\U0001F7E6")):
             v = "ui%s%s" % (var, ch)
             lines.append("DEFINE_UI_PARAMS(%s, %s %s, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)" % (v, zone, dot))
             lines.append('DEFINE_UI_TOOLTIP(%s, "%s offset in the %s zone (%s): + more %s, - less. The zones overlap '

@@ -3,7 +3,7 @@
 // www.markcaptures.com
 
 // ============================================================================
-//  MC_Pro-Split-v0.8.dctl  -  MC Pro Split (RGB split tone, five zones)
+//  MC_Pro-Split-v0.9.dctl  -  MC Pro Split (RGB split tone, five zones)
 //  ---------------------------------------------------------------------------
 //  An RGB split tone for DaVinci Resolve Studio, part of the MC Film suite:
 //  a red, green and blue offset for each of five tonal zones - Hi, Hi-Mid,
@@ -37,7 +37,7 @@
 //      -> [MC Pro Split  Transfer Function: DaVinci Intermediate]
 //      -> [CST DWG / DaVinci Intermediate -> Rec.709]
 //
-//  Version : 0.8
+//  Version : 0.9
 //  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
 //            You may use this file for personal and commercial grading work.
 //            You may not redistribute, share, sell, sublicense or publish it,
@@ -49,35 +49,35 @@
 //  UI
 // ----------------------------------------------------------------------------
 
-DEFINE_UI_PARAMS(uiHiR, Hi 🔴, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiHiR, Hi 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiHiR, "Red offset in the Hi zone (centred 2.5 stops above the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiHiG, Hi 🟢, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiHiG, Hi 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiHiG, "Green offset in the Hi zone (centred 2.5 stops above the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiHiB, Hi 🔵, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiHiB, Hi 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiHiB, "Blue offset in the Hi zone (centred 2.5 stops above the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiHiMidR, Hi-Mid 🔴, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiHiMidR, Hi-Mid 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiHiMidR, "Red offset in the Hi-Mid zone (centred 1.25 stops above the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiHiMidG, Hi-Mid 🟢, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiHiMidG, Hi-Mid 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiHiMidG, "Green offset in the Hi-Mid zone (centred 1.25 stops above the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiHiMidB, Hi-Mid 🔵, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiHiMidB, Hi-Mid 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiHiMidB, "Blue offset in the Hi-Mid zone (centred 1.25 stops above the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiMidR, Mid 🔴, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiMidR, Mid 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiMidR, "Red offset in the Mid zone (centred on the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiMidG, Mid 🟢, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiMidG, Mid 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiMidG, "Green offset in the Mid zone (centred on the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiMidB, Mid 🔵, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiMidB, Mid 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiMidB, "Blue offset in the Mid zone (centred on the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiLoMidR, Lo-Mid 🔴, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiLoMidR, Lo-Mid 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiLoMidR, "Red offset in the Lo-Mid zone (centred 1.25 stops below the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiLoMidG, Lo-Mid 🟢, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiLoMidG, Lo-Mid 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiLoMidG, "Green offset in the Lo-Mid zone (centred 1.25 stops below the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiLoMidB, Lo-Mid 🔵, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiLoMidB, Lo-Mid 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiLoMidB, "Blue offset in the Lo-Mid zone (centred 1.25 stops below the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiLoR, Lo 🔴, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiLoR, Lo 🟥, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiLoR, "Red offset in the Lo zone (centred 2.5 stops below the Pivot): + more red, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiLoG, Lo 🟢, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiLoG, Lo 🟩, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiLoG, "Green offset in the Lo zone (centred 2.5 stops below the Pivot): + more green, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
-DEFINE_UI_PARAMS(uiLoB, Lo 🔵, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiLoB, Lo 🟦, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiLoB, "Blue offset in the Lo zone (centred 2.5 stops below the Pivot): + more blue, - less. The zones overlap broadly; -100 on Lo moves the shadows about 1.3 stops.")
 DEFINE_UI_PARAMS(uiBlend, Blend, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiBlend, "Strength of the whole split tone, in percent.")
