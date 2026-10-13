@@ -1,0 +1,426 @@
+// MarkCaptures MC ACES Contrast
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
+
+// ============================================================================
+//  MC_ACES-Contrast-v@@VERSION@@.dctl  -  MC ACES Contrast
+//  ---------------------------------------------------------------------------
+//  The "Contrast" group of the MarkCaptures PowerGrade as one DCTL for
+//  DaVinci Resolve Studio.  The eight nodes run in the PowerGrade's order, in
+//  ACEScct, with their PowerGrade values as the defaults:
+//
+//      1 Diffusion        custom curve (Y = R = G = B), soft highlight roll-off
+//      2 Density          Color Warper + HSV curves      (LUT, see below)
+//      3 Compensation     exposure -0.30 stop
+//      4 Hue Adjustments  Hue vs Hue and Hue vs Sat curves
+//      5 Midtones         contrast 1.1 @ 0.435 and saturation 0.9, inside a
+//                         luminance key (58.3 - 61.4 %)
+//      6 Contrast         custom curve (Y = R = G = B)
+//      7 Shadows          blue curve inside an inverted luminance key
+//      8 Sat. Fix         Hue vs Sat warper + Chroma-Luma grid  (LUT)
+//      then the extra Contrast / Saturation / Exposure and Blend
+//
+//  Each node has a strength in percent: out = in + strength x (node - in);
+//  100 is the PowerGrade, 0 switches the node off, above 100 pushes it further.
+//
+//  LUT FILES
+//  Density and Sat. Fix are Resolve LUTs of the original nodes (65 point,
+//  DaVinci Wide Gamut / Intermediate).  Keep both .cube files in the same
+//  folder as this DCTL:
+//      MC_ACES_Contrast_Density.cube
+//      MC_ACES_Contrast_SatFix.cube
+//  They are read at lattice points and interpolated tetrahedrally here, so the
+//  result is the same whatever LUT interpolation the project uses.
+//
+//  MIDTONES KEY
+//  In the PowerGrade the Midtones key is cleaned up spatially (Denoise 100).
+//  A DCTL works per pixel, and with the key's own soft edges the contrast
+//  would bend the tone curve backwards at the top of the key, so its soft
+//  edges are widened just enough to keep the curve rising.
+//
+//  POWER GRADE ORDER (DaVinci Wide Gamut)
+//    [camera log] -> [CST to DWG / DaVinci Intermediate] -> [corrections]
+//      -> [MC ACES Contrast  Colour Space: DaVinci Wide Gamut Intermediate]
+//      -> [CST DWG / DaVinci Intermediate -> Rec.709]
+//  In an ACES project (ACEScct timeline) set Colour Space to ACEScct.
+//
+//  Version : @@VERSION@@
+//  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
+//            You may use this file for personal and commercial grading work.
+//            You may not redistribute, share, sell, sublicense or publish it,
+//            in whole or in part.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+//  UI
+// ----------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(uiBlend, Blend, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiBlend, "Strength of the whole node, in percent: 0 returns the input.")
+DEFINE_UI_PARAMS(uiDiffusion, 1 Diffusion, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiDiffusion, "Diffusion curve, in percent (100 = PowerGrade): rolls the highlights off, white comes down about 10 %.")
+DEFINE_UI_PARAMS(uiDensity, 2 Density, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiDensity, "Density node, in percent (100 = PowerGrade): richer saturation with saturated colours made denser (darker), most in blues, purples and greens. Needs MC_ACES_Contrast_Density.cube next to the DCTL.")
+DEFINE_UI_PARAMS(uiCompensation, 3 Compensation, DCTLUI_SLIDER_FLOAT, @@COMPENSATION@@, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiCompensation, "Exposure after Density, in stops (PowerGrade -0.30).")
+DEFINE_UI_PARAMS(uiHue, 4 Hue Adjustments, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHue, "Hue vs Hue and Hue vs Sat curves, in percent (100 = PowerGrade): pulls cyan-blues and blues together (up to 7.5 degrees) and takes about 12 % saturation out of the blues.")
+DEFINE_UI_PARAMS(uiMidtones, 5 Midtones, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiMidtones, "Midtones node, in percent (100 = PowerGrade): contrast 1.1 and saturation 0.9 inside the luminance key at 58 - 61 % (ACEScct).")
+DEFINE_UI_PARAMS(uiContrastCurve, 6 Contrast Curve, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiContrastCurve, "Contrast curve, in percent (100 = PowerGrade): a gentle S, deeper blacks and a lift just above middle grey.")
+DEFINE_UI_PARAMS(uiShadows, 7 Shadows, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiShadows, "Shadows node, in percent (100 = PowerGrade): lifts blue in the shadows, keyed below about 55 % ACEScct (key gain 0.8).")
+DEFINE_UI_PARAMS(uiSatFix, 8 Sat Fix, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiSatFix, "Sat. Fix node, in percent (100 = PowerGrade): calms reds, oranges and yellow-greens and dark yellows. Needs MC_ACES_Contrast_SatFix.cube next to the DCTL.")
+DEFINE_UI_PARAMS(uiContrast, Contrast, DCTLUI_SLIDER_FLOAT, 1.0, 0.5, 2.0, 0.001)
+DEFINE_UI_TOOLTIP(uiContrast, "Extra contrast after the eight nodes, on ACEScct around Pivot. 1 = off.")
+DEFINE_UI_PARAMS(uiPivot, Pivot, DCTLUI_SLIDER_FLOAT, 0.4135, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiPivot, "Pivot of the extra Contrast, in ACEScct code value (0.4135 = 18 % grey; Resolve's own default is 0.435).")
+DEFINE_UI_PARAMS(uiSaturation, Saturation, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_TOOLTIP(uiSaturation, "Extra saturation after the eight nodes, in linear ACES with the brightness kept. 1 = off.")
+DEFINE_UI_PARAMS(uiExposure, Exposure, DCTLUI_SLIDER_FLOAT, 0.0, -4.0, 4.0, 0.01)
+DEFINE_UI_TOOLTIP(uiExposure, "Extra exposure after the eight nodes, in stops. 0 = off.")
+
+DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
+
+DEFINE_UI_PARAMS(uiSpace, Colour Space, DCTLUI_COMBO_BOX, 0, {MCA_DWG, MCA_ACESCCT}, {DaVinci Wide Gamut Intermediate, ACEScct})
+DEFINE_UI_TOOLTIP(uiSpace, "Colour space of this node's input and output: DaVinci Wide Gamut / Intermediate in a DWG project, ACEScct in an ACES project.")
+
+DEFINE_LUT(McaDensityLut, MC_ACES_Contrast_Density.cube)
+DEFINE_LUT(McaSatFixLut, MC_ACES_Contrast_SatFix.cube)
+
+
+// ----------------------------------------------------------------------------
+//  Constants and tables (generated from tools/mc_aces_contrast.py)
+// ----------------------------------------------------------------------------
+
+#define MCA_LUT_N @@LUT_N@@
+#define MCA_CURVE_N @@CURVE_N@@
+#define MCA_HUE_N @@HUE_N@@
+#define MCA_PI 3.14159265358979f
+
+__CONSTANT__ float MCA_AP1_TO_DWG[9] = {@@AP1_TO_DWG@@};
+__CONSTANT__ float MCA_DWG_TO_AP1[9] = {@@DWG_TO_AP1@@};
+
+__CONSTANT__ float MCA_DIFFUSION[MCA_CURVE_N] = {@@DIFFUSION_TABLE@@};
+__CONSTANT__ float MCA_CONTRAST[MCA_CURVE_N] = {@@CONTRAST_TABLE@@};
+__CONSTANT__ float MCA_SHADOWS[MCA_CURVE_N] = {@@SHADOWS_TABLE@@};
+__CONSTANT__ float MCA_HUE_HUE[MCA_HUE_N] = {@@HUE_HUE_TABLE@@};
+__CONSTANT__ float MCA_HUE_SAT[MCA_HUE_N] = {@@HUE_SAT_TABLE@@};
+
+// end slopes of the tone curves, for code values outside 0 .. 1
+#define MCA_DIFFUSION_M0 @@DIFFUSION_M0@@f
+#define MCA_DIFFUSION_M1 @@DIFFUSION_M1@@f
+#define MCA_CONTRAST_M0 @@CONTRAST_M0@@f
+#define MCA_CONTRAST_M1 @@CONTRAST_M1@@f
+#define MCA_SHADOWS_M0 @@SHADOWS_M0@@f
+#define MCA_SHADOWS_M1 @@SHADOWS_M1@@f
+
+#define MCA_MT_CONTRAST @@MT_CONTRAST@@f
+#define MCA_MT_PIVOT @@MT_PIVOT@@f
+#define MCA_MT_SAT @@MT_SAT@@f
+#define MCA_MT_LOW @@MT_LOW@@f
+#define MCA_MT_HIGH @@MT_HIGH@@f
+#define MCA_MT_LOW_SOFT @@MT_LOW_SOFT@@f
+#define MCA_MT_HIGH_SOFT @@MT_HIGH_SOFT@@f
+#define MCA_MT_SOFT_K @@MT_SOFT_K@@f
+#define MCA_MT_SOFT_MARGIN @@MT_SOFT_MARGIN@@f
+#define MCA_SH_LOW @@SH_LOW@@f
+#define MCA_SH_HIGH @@SH_HIGH@@f
+#define MCA_SH_LOW_SOFT @@SH_LOW_SOFT@@f
+#define MCA_SH_HIGH_SOFT @@SH_HIGH_SOFT@@f
+#define MCA_SH_GAIN @@SH_GAIN@@f
+
+#define MCA_AP1_YR @@AP1_YR@@f
+#define MCA_AP1_YG @@AP1_YG@@f
+#define MCA_AP1_YB @@AP1_YB@@f
+#define MCA_LUMA_R @@LUMA_R@@f
+#define MCA_LUMA_G @@LUMA_G@@f
+#define MCA_LUMA_B @@LUMA_B@@f
+
+
+// ----------------------------------------------------------------------------
+//  Colour spaces
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 McaMul33(__CONSTANTREF__ float* m, float3 c)
+{
+    return make_float3(m[0] * c.x + m[1] * c.y + m[2] * c.z,
+                       m[3] * c.x + m[4] * c.y + m[5] * c.z,
+                       m[6] * c.x + m[7] * c.y + m[8] * c.z);
+}
+
+__DEVICE__ float McaDiDecode(float y)
+{
+    return y > 0.02740668f ? _exp2f(_fminf(y, 6.0f) / 0.07329248f - 7.0f) - 0.0075f : y / 10.44426855f;
+}
+
+__DEVICE__ float McaDiEncode(float x)
+{
+    return x > 0.00262409f ? (_log2f(_fmaxf(x + 0.0075f, 1e-30f)) + 7.0f) * 0.07329248f : x * 10.44426855f;
+}
+
+__DEVICE__ float McaCctEncode(float x)
+{
+    return x <= 0.0078125f ? 10.5402377416545f * x + 0.0729055341958355f : (_log2f(_fmaxf(x, 1e-30f)) + 9.72f) / 17.52f;
+}
+
+__DEVICE__ float McaCctDecode(float y)
+{
+    return y > 0.155251141552511f ? _exp2f(_fminf(y, 6.0f) * 17.52f - 9.72f) : (y - 0.0729055341958355f) / 10.5402377416545f;
+}
+
+__DEVICE__ float3 McaCctToLin(float3 c) { return make_float3(McaCctDecode(c.x), McaCctDecode(c.y), McaCctDecode(c.z)); }
+__DEVICE__ float3 McaLinToCct(float3 c) { return make_float3(McaCctEncode(c.x), McaCctEncode(c.y), McaCctEncode(c.z)); }
+
+__DEVICE__ float3 McaDwgToCct(float3 c)
+{
+    float3 l = make_float3(McaDiDecode(c.x), McaDiDecode(c.y), McaDiDecode(c.z));
+    return McaLinToCct(McaMul33(MCA_DWG_TO_AP1, l));
+}
+
+__DEVICE__ float3 McaCctToDwg(float3 c)
+{
+    float3 l = McaMul33(MCA_AP1_TO_DWG, McaCctToLin(c));
+    return make_float3(McaDiEncode(l.x), McaDiEncode(l.y), McaDiEncode(l.z));
+}
+
+__DEVICE__ float McaApY(float3 l) { return MCA_AP1_YR * l.x + MCA_AP1_YG * l.y + MCA_AP1_YB * l.z; }
+__DEVICE__ float McaLuma(float3 c) { return MCA_LUMA_R * c.x + MCA_LUMA_G * c.y + MCA_LUMA_B * c.z; }
+__DEVICE__ float3 McaMix(float3 a, float3 b, float k) { return make_float3(a.x + k * (b.x - a.x), a.y + k * (b.y - a.y), a.z + k * (b.z - a.z)); }
+
+__DEVICE__ float McaSmooth(float e0, float e1, float x)
+{
+    if (e1 <= e0) return x >= e1 ? 1.0f : 0.0f;
+    float t = _saturatef((x - e0) / (e1 - e0));
+    return t * t * (3.0f - 2.0f * t);
+}
+
+
+// ----------------------------------------------------------------------------
+//  Curves
+// ----------------------------------------------------------------------------
+
+// tone curve sampled over code 0 .. 1, straight lines with the end slopes outside
+__DEVICE__ float McaCurve(__CONSTANTREF__ float* t, float x, float m0, float m1)
+{
+    if (x <= 0.0f) return t[0] + m0 * x;
+    if (x >= 1.0f) return t[MCA_CURVE_N - 1] + m1 * (x - 1.0f);
+    float p = x * (float)(MCA_CURVE_N - 1);
+    int i = (int)p;
+    if (i > MCA_CURVE_N - 2) i = MCA_CURVE_N - 2;
+    float f = p - (float)i;
+    return t[i] + (t[i + 1] - t[i]) * f;
+}
+
+// periodic hue curve sampled over one turn
+__DEVICE__ float McaHueCurve(__CONSTANTREF__ float* t, float h)
+{
+    float p = h * (float)MCA_HUE_N;
+    p = p - _floor(p / (float)MCA_HUE_N) * (float)MCA_HUE_N;
+    int i = (int)p;
+    if (i >= MCA_HUE_N) i = MCA_HUE_N - 1;
+    if (i < 0) i = 0;
+    int j = i + 1 >= MCA_HUE_N ? 0 : i + 1;
+    float f = p - (float)i;
+    return t[i] + (t[j] - t[i]) * f;
+}
+
+__DEVICE__ float3 McaCurveRGB(__CONSTANTREF__ float* t, float3 c, float m0, float m1, float k)
+{
+    return make_float3(c.x + k * (McaCurve(t, c.x, m0, m1) - c.x),
+                       c.y + k * (McaCurve(t, c.y, m0, m1) - c.y),
+                       c.z + k * (McaCurve(t, c.z, m0, m1) - c.z));
+}
+
+
+// ----------------------------------------------------------------------------
+//  Nodes (ACEScct)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float McaHsvHue(float3 c)
+{
+    float mx = _fmaxf(_fmaxf(c.x, c.y), c.z);
+    float mn = _fminf(_fminf(c.x, c.y), c.z);
+    float d = mx - mn;
+    float ds = d > 1e-10f ? d : 1.0f;
+    float h;
+    if (mx == c.x) h = (c.y - c.z) / ds;
+    else if (mx == c.y) h = 2.0f + (c.z - c.x) / ds;
+    else h = 4.0f + (c.x - c.y) / ds;
+    h = h / 6.0f;
+    return h - _floor(h);
+}
+
+// Hue vs Hue: rotate the colour about the grey axis; Hue vs Sat: scale its distance from grey
+__DEVICE__ float3 McaHueNode(float3 c, float k)
+{
+    float h = McaHsvHue(c);
+    float dh = McaHueCurve(MCA_HUE_HUE, h) - 0.5f;
+    float g = 2.0f * McaHueCurve(MCA_HUE_SAT, h);
+    float m = (c.x + c.y + c.z) / 3.0f;
+    float3 v = make_float3(c.x - m, c.y - m, c.z - m);
+    float a = 2.0f * MCA_PI * k * dh;
+    float cs = _cosf(a), sn = _sinf(a) * 0.577350269189626f;
+    float3 r = make_float3(v.x * cs + (v.z - v.y) * sn, v.y * cs + (v.x - v.z) * sn, v.z * cs + (v.y - v.x) * sn);
+    float s = 1.0f + k * (g - 1.0f);
+    return make_float3(m + r.x * s, m + r.y * s, m + r.z * s);
+}
+
+__DEVICE__ float3 McaMidtonesNode(float3 c, float k)
+{
+    float dlo = _fabs(k * (MCA_MT_CONTRAST - 1.0f) * (MCA_MT_LOW - MCA_MT_PIVOT));
+    float dhi = _fabs(k * (MCA_MT_CONTRAST - 1.0f) * (MCA_MT_HIGH + MCA_MT_SOFT_MARGIN - MCA_MT_PIVOT));
+    float ls = _fmaxf(MCA_MT_LOW_SOFT, MCA_MT_SOFT_K * dlo);
+    float hs = _fmaxf(MCA_MT_HIGH_SOFT, MCA_MT_SOFT_K * dhi);
+    float y = McaLuma(c);
+    float key = McaSmooth(MCA_MT_LOW - ls, MCA_MT_LOW, y) * (1.0f - McaSmooth(MCA_MT_HIGH, MCA_MT_HIGH + hs, y));
+    if (key <= 0.0f) return c;
+    float3 x1 = make_float3((c.x - MCA_MT_PIVOT) * MCA_MT_CONTRAST + MCA_MT_PIVOT,
+                            (c.y - MCA_MT_PIVOT) * MCA_MT_CONTRAST + MCA_MT_PIVOT,
+                            (c.z - MCA_MT_PIVOT) * MCA_MT_CONTRAST + MCA_MT_PIVOT);
+    float3 l = McaCctToLin(x1);
+    float yl = McaApY(l);
+    float3 x2 = McaLinToCct(make_float3(yl + MCA_MT_SAT * (l.x - yl), yl + MCA_MT_SAT * (l.y - yl), yl + MCA_MT_SAT * (l.z - yl)));
+    return McaMix(c, x2, k * key);
+}
+
+__DEVICE__ float3 McaShadowsNode(float3 c, float k)
+{
+    float y = McaLuma(c);
+    float sel = McaSmooth(MCA_SH_LOW - MCA_SH_LOW_SOFT, MCA_SH_LOW, y) * (1.0f - McaSmooth(MCA_SH_HIGH, MCA_SH_HIGH + MCA_SH_HIGH_SOFT, y));
+    float key = MCA_SH_GAIN * (1.0f - sel);
+    float b = c.z + k * key * (McaCurve(MCA_SHADOWS, c.z, MCA_SHADOWS_M0, MCA_SHADOWS_M1) - c.z);
+    return make_float3(c.x, c.y, b);
+}
+
+
+// ----------------------------------------------------------------------------
+//  LUT nodes: tetrahedral interpolation from four lattice reads
+// ----------------------------------------------------------------------------
+
+typedef struct { float3 c, p0, p1, p2, p3; float w0, w1, w2, w3; } McaTet;
+
+// 0 .. 1, and NaN -> 0, so a lattice index is always valid
+__DEVICE__ float McaUnit(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }
+
+__DEVICE__ float McaLatIndex(float v)
+{
+    return _fminf(_floor(McaUnit(v) * (float)(MCA_LUT_N - 1)), (float)(MCA_LUT_N - 2));
+}
+
+__DEVICE__ McaTet McaTetSetup(float3 c)
+{
+    McaTet t;
+    float s = 1.0f / (float)(MCA_LUT_N - 1);
+    float r = McaLatIndex(c.x), g = McaLatIndex(c.y), b = McaLatIndex(c.z);
+    float fr = McaUnit(c.x) * (float)(MCA_LUT_N - 1) - r;
+    float fg = McaUnit(c.y) * (float)(MCA_LUT_N - 1) - g;
+    float fb = McaUnit(c.z) * (float)(MCA_LUT_N - 1) - b;
+    float3 a1, a2;
+    float f1, f2, f3;
+    if (fr > fg)
+    {
+        if (fg > fb)      { a1 = make_float3(1.0f, 0.0f, 0.0f); a2 = make_float3(1.0f, 1.0f, 0.0f); f1 = fr; f2 = fg; f3 = fb; }
+        else if (fr > fb) { a1 = make_float3(1.0f, 0.0f, 0.0f); a2 = make_float3(1.0f, 0.0f, 1.0f); f1 = fr; f2 = fb; f3 = fg; }
+        else              { a1 = make_float3(0.0f, 0.0f, 1.0f); a2 = make_float3(1.0f, 0.0f, 1.0f); f1 = fb; f2 = fr; f3 = fg; }
+    }
+    else
+    {
+        if (fb > fg)      { a1 = make_float3(0.0f, 0.0f, 1.0f); a2 = make_float3(0.0f, 1.0f, 1.0f); f1 = fb; f2 = fg; f3 = fr; }
+        else if (fb > fr) { a1 = make_float3(0.0f, 1.0f, 0.0f); a2 = make_float3(0.0f, 1.0f, 1.0f); f1 = fg; f2 = fb; f3 = fr; }
+        else              { a1 = make_float3(0.0f, 1.0f, 0.0f); a2 = make_float3(1.0f, 1.0f, 0.0f); f1 = fg; f2 = fr; f3 = fb; }
+    }
+    t.c = make_float3(McaUnit(c.x), McaUnit(c.y), McaUnit(c.z));
+    t.p0 = make_float3(r * s, g * s, b * s);
+    t.p1 = make_float3((r + a1.x) * s, (g + a1.y) * s, (b + a1.z) * s);
+    t.p2 = make_float3((r + a2.x) * s, (g + a2.y) * s, (b + a2.z) * s);
+    t.p3 = make_float3((r + 1.0f) * s, (g + 1.0f) * s, (b + 1.0f) * s);
+    t.w0 = 1.0f - f1; t.w1 = f1 - f2; t.w2 = f2 - f3; t.w3 = f3;
+    return t;
+}
+
+// in + k (LUT(clamp(in)) - clamp(in)): values outside 0 .. 1 keep their excess
+__DEVICE__ float3 McaTetFinish(float3 in, McaTet t, float3 v0, float3 v1, float3 v2, float3 v3, float k)
+{
+    float3 o = make_float3(t.w0 * v0.x + t.w1 * v1.x + t.w2 * v2.x + t.w3 * v3.x,
+                           t.w0 * v0.y + t.w1 * v1.y + t.w2 * v2.y + t.w3 * v3.y,
+                           t.w0 * v0.z + t.w1 * v1.z + t.w2 * v2.z + t.w3 * v3.z);
+    return make_float3(in.x + k * (o.x - t.c.x), in.y + k * (o.y - t.c.y), in.z + k * (o.z - t.c.z));
+}
+
+// APPLY_LUT is kept inside transform()
+#define MCA_LUT_NODE(LUT, IN, K, OUT) { \
+    McaTet tt = McaTetSetup(IN); \
+    float3 v0 = APPLY_LUT(tt.p0.x, tt.p0.y, tt.p0.z, LUT); \
+    float3 v1 = APPLY_LUT(tt.p1.x, tt.p1.y, tt.p1.z, LUT); \
+    float3 v2 = APPLY_LUT(tt.p2.x, tt.p2.y, tt.p2.z, LUT); \
+    float3 v3 = APPLY_LUT(tt.p3.x, tt.p3.y, tt.p3.z, LUT); \
+    OUT = McaTetFinish(IN, tt, v0, v1, v2, v3, K); }
+
+
+// ----------------------------------------------------------------------------
+//  Main
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    float3 src = make_float3(p_R, p_G, p_B);
+    if (uiBypass) return src;
+
+    float3 c = uiSpace == MCA_ACESCCT ? src : McaDwgToCct(src);
+    float3 d;
+
+    // 1 Diffusion
+    if (uiDiffusion != 0.0f) c = McaCurveRGB(MCA_DIFFUSION, c, MCA_DIFFUSION_M0, MCA_DIFFUSION_M1, uiDiffusion * 0.01f);
+
+    // 2 Density (DWG/DI)
+    d = McaCctToDwg(c);
+    if (uiDensity != 0.0f) MCA_LUT_NODE(McaDensityLut, d, uiDensity * 0.01f, d)
+
+    // 3 Compensation (linear)
+    float e = _exp2f(uiCompensation);
+    float3 l = make_float3(McaDiDecode(d.x) * e, McaDiDecode(d.y) * e, McaDiDecode(d.z) * e);
+    c = McaLinToCct(McaMul33(MCA_DWG_TO_AP1, l));
+
+    // 4 Hue Adjustments, 5 Midtones, 6 Contrast, 7 Shadows
+    if (uiHue != 0.0f) c = McaHueNode(c, uiHue * 0.01f);
+    if (uiMidtones != 0.0f) c = McaMidtonesNode(c, uiMidtones * 0.01f);
+    if (uiContrastCurve != 0.0f) c = McaCurveRGB(MCA_CONTRAST, c, MCA_CONTRAST_M0, MCA_CONTRAST_M1, uiContrastCurve * 0.01f);
+    if (uiShadows != 0.0f) c = McaShadowsNode(c, uiShadows * 0.01f);
+
+    // 8 Sat. Fix (DWG/DI)
+    d = McaCctToDwg(c);
+    if (uiSatFix != 0.0f) MCA_LUT_NODE(McaSatFixLut, d, uiSatFix * 0.01f, d)
+
+    // extras
+    if (uiContrast != 1.0f || uiSaturation != 1.0f || uiExposure != 0.0f)
+    {
+        c = McaDwgToCct(d);
+        if (uiContrast != 1.0f)
+            c = make_float3((c.x - uiPivot) * uiContrast + uiPivot, (c.y - uiPivot) * uiContrast + uiPivot, (c.z - uiPivot) * uiContrast + uiPivot);
+        if (uiSaturation != 1.0f || uiExposure != 0.0f)
+        {
+            float x = _exp2f(uiExposure);
+            float3 q = McaCctToLin(c);
+            q = make_float3(q.x * x, q.y * x, q.z * x);
+            if (uiSaturation != 1.0f)
+            {
+                float yl = McaApY(q);
+                q = make_float3(yl + uiSaturation * (q.x - yl), yl + uiSaturation * (q.y - yl), yl + uiSaturation * (q.z - yl));
+            }
+            c = McaLinToCct(q);
+        }
+        d = McaCctToDwg(c);
+    }
+
+    float3 out = uiSpace == MCA_ACESCCT ? McaDwgToCct(d) : d;
+    return McaMix(src, out, uiBlend * 0.01f);
+}
+
+// MarkCaptures MC ACES Contrast
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com

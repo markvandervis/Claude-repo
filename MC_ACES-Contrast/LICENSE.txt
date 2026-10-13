@@ -1,0 +1,15 @@
+MarkCaptures MC ACES Contrast
+© 2026 Mark van der Vis / MarkCaptures
+www.markcaptures.com
+
+All rights reserved.
+
+This folder (the DCTL, the two .cube files, the build and test tools and the
+documentation) is the work of Mark van der Vis / MarkCaptures. You may
+install and use the DCTL and its LUTs for personal and commercial grading
+work and sell the images and films you make with them. You may not
+redistribute, share, publish, sell, resell, sublicense or bundle the files
+or any modified version or part of them without prior written permission
+from Mark van der Vis / MarkCaptures.
+
+The software is provided "as is", without warranty of any kind.
