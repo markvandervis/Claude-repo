@@ -29,22 +29,18 @@ def table(a, per_line=8):
 
 def generate():
     subs = {"VERSION": m.VERSION, "LUT_N": str(m.lut("density").shape[0]),
-            "CURVE_N": str(m.CURVE_N), "HUE_N": str(m.HUE_N),
+            "CURVE_N": str(m.CURVE_N),
             "AP1_TO_DWG": ", ".join(flt(v) for v in m.AP1_TO_DWG.ravel()),
             "DWG_TO_AP1": ", ".join(flt(v) for v in m.DWG_TO_AP1.ravel()),
-            "DIFFUSION_TABLE": table(m.curve_table(m.KN_DIFFUSION)),
-            "CONTRAST_TABLE": table(m.curve_table(m.KN_CONTRAST)),
-            "SHADOWS_TABLE": table(m.curve_table(m.KN_SHADOWS)),
-            "HUE_HUE_TABLE": table(m.hue_table(m.BZ_HUE_HUE)),
-            "HUE_SAT_TABLE": table(m.hue_table(m.BZ_HUE_SAT)),
+            "DIFFUSION_TABLE": table(m.curve_table()),
+            "DIFFUSION_X0": "%.9g" % m._DIFF_X0, "DIFFUSION_M0": "%.9g" % m.DIFFUSION_M0,
+            "DIFFUSION_X1": "%.9g" % m._DIFF_X1, "DIFFUSION_Y1": "%.9g" % float(m.diffusion_curve(m._DIFF_X1)),
+            "DIFFUSION_M1": "%.9g" % m.DIFFUSION_M1,
             "COMPENSATION": "%.2f" % m.COMPENSATION,
             "AP1_YR": "%.10g" % m.AP1_Y[0], "AP1_YG": "%.10g" % m.AP1_Y[1], "AP1_YB": "%.10g" % m.AP1_Y[2],
             "LUMA_R": "%.10g" % m.LUMA[0], "LUMA_G": "%.10g" % m.LUMA[1], "LUMA_B": "%.10g" % m.LUMA[2]}
-    for name, kn in (("DIFFUSION", m.KN_DIFFUSION), ("CONTRAST", m.KN_CONTRAST), ("SHADOWS", m.KN_SHADOWS)):
-        subs[name + "_M0"] = "%.9g" % kn[2][0]
-        subs[name + "_M1"] = "%.9g" % kn[2][-1]
     for k in ("MT_CONTRAST", "MT_PIVOT", "MT_SAT", "MT_LOW", "MT_HIGH", "MT_LOW_SOFT", "MT_HIGH_SOFT",
-              "MT_SOFT_K", "MT_SOFT_MARGIN", "SH_LOW", "SH_HIGH", "SH_LOW_SOFT", "SH_HIGH_SOFT", "SH_GAIN"):
+              "MT_SOFT_K", "MT_SOFT_MARGIN"):
         subs[k] = "%.9g" % getattr(m, k)
     src = open(TEMPLATE, encoding="utf-8").read()
 

@@ -6,15 +6,18 @@ The **Contrast** group of the MarkCaptures PowerGrade (`can_we_make_this_as_a_dc
 
 ## Install
 
-Copy these three files **into the same folder** in Resolve's LUT folder (for example `.../LUT/MarkCaptures/`), then *Reload DCTL / LUT list*:
+Copy these six files **into the same folder** in Resolve's LUT folder (for example `.../LUT/MarkCaptures/`), then *Reload DCTL / LUT list*:
 
 | File | |
 |---|---|
-| `MC_ACES-Contrast-v1.0.dctl` | the DCTL |
-| `MC_ACES_Contrast_Density.cube` | the Density node (Color Warper + HSV curves) |
-| `MC_ACES_Contrast_SatFix.cube` | the Sat. Fix node (Hue vs Sat warper + Chroma-Luma grid) |
+| `MC_ACES-Contrast-v1.1.dctl` | the DCTL |
+| `MC_ACES_Contrast_Density.cube` | the Density node |
+| `MC_ACES_Contrast_Hue.cube` | the Hue Adjustments node |
+| `MC_ACES_Contrast_Contrast.cube` | the Contrast node |
+| `MC_ACES_Contrast_Shadows.cube` | the Shadows node |
+| `MC_ACES_Contrast_SatFix.cube` | the Sat. Fix node |
 
-The DCTL loads the two cubes from its own folder. If they are missing, Resolve won't compile it.
+The DCTL loads the cubes from its own folder; if one is missing, Resolve won't compile it. Remove v1.0 and its two cubes: v1.1 replaces them.
 
 ## Node tree
 
@@ -32,14 +35,16 @@ The nodes run in the PowerGrade's order (read from the node links in the .drx), 
 
 | # | Node | How it is rebuilt |
 |---|---|---|
-| 1 | Diffusion | Its custom curve (Y = R = G = B), from the .drx control points. Rolls off the highlights; white comes down to 0.904. |
-| 2 | Density | Resolve's own 65-point LUT of the node (Color Warper Chroma-Luma, HSV-mode curves and its key). |
-| 3 | Compensation | HDR Global exposure −0.30 stop. Checked against the exported LUT, which it matches exactly. |
-| 4 | Hue Adjustments | Hue vs Hue and Hue vs Sat curves (periodic Bézier, from the .drx). Pulls cyan-blue and blue together by up to 7.5° and takes about 12 % saturation out of blue. |
-| 5 | Midtones | Contrast 1.1 @ 0.435 and HDR saturation 0.9, inside the luminance qualifier (low 58.3 %, high 61.4 %, soft 3.4 / 1.4 %). |
-| 6 | Contrast | Its custom curve (Y = R = G = B). |
-| 7 | Shadows | Its blue curve, inside the inverted luminance qualifier (55.7–99.0 %, low soft 4.8 %, key gain 0.8): a blue lift in the shadows. |
-| 8 | Sat. Fix | Resolve's own 65-point LUT of the node. |
+| 1 | Diffusion | Its curve measured from Resolve's export of the node. It's a pure per-channel curve (checked on colours, error < 0.001), so it is a small table in the DCTL. Middle grey −0.03, white −0.09 (ACEScct). |
+| 2 | Density | Resolve's 65-point LUT of the node. |
+| 3 | Compensation | HDR Global exposure −0.30 stop. Exact match to the exported LUT. |
+| 4 | Hue Adjustments | Resolve's LUT of the node. |
+| 5 | Midtones | Rebuilt from its settings: contrast 1.1 @ 0.435 and HDR saturation 0.9, inside the luminance qualifier (low 58.3 %, high 61.4 %, soft 3.4 / 1.4 %). |
+| 6 | Contrast | Resolve's LUT of the node. It isn't quite a per-channel curve, so it stays a LUT. |
+| 7 | Shadows | Resolve's LUT of the node, its luminance key included. |
+| 8 | Sat. Fix | Resolve's LUT of the node. |
+
+Between the LUT nodes the image stays in DWG/DI, the space the LUTs were exported in.
 
 ## Controls
 
@@ -56,13 +61,10 @@ The nodes run in the PowerGrade's order (read from the node links in the .drx), 
 
 ## Notes and differences from the PowerGrade
 
-- **Midtones key.** In the PowerGrade the key is cleaned up spatially (Denoise 100), which a per-pixel DCTL can't do. With the key's own very narrow soft edges, contrast 1.1 would make the tone curve run backwards at the top of the key. So the soft edges are widened just enough to keep the curve rising (to about 0.037 low and 0.057 high at 100 %). That's also why the Midtones LUT export showed almost nothing: the LUT can't hold the spatial key.
-- **LUT interpolation.** The Density LUT gives exact greys a sharp lift (+0.04 at about 60 %) that near-greys don't get. Trilinear interpolation smears that spike and bends the grey ramp backwards. So the DCTL reads the two LUTs at their lattice points and interpolates them tetrahedrally itself: greys stay on the LUT's own grey axis, whatever the project's LUT interpolation is set to.
-- **Interpretations still to confirm against Resolve LUT exports.** Resolve's file format isn't documented, so these come from reading the .drx:
-  - linked Y/R/G/B curves act once per channel;
-  - curves are monotone cubics through their points;
-  - the Hue curve x axis starts at red, Hue vs Hue moves hue by (y − 0.5) of a turn and Hue vs Sat scales chroma by 2y;
-  - the Shadows key is inverted, and its 0.8 is the key output gain.
+- **Midtones key.** In the PowerGrade the key is cleaned up spatially (Denoise 100), which a per-pixel DCTL can't do. With the key's own very narrow soft edges, contrast 1.1 would make the tone curve run backwards at the top of the key. So the soft edges are widened just enough to keep the curve rising (to about 0.037 low and 0.057 high at 100 %). That's also why its LUT export showed almost nothing: a LUT can't hold the spatial key. Midtones is the one node that isn't measured.
+- **Shadows key.** Its Denoise 80 is spatial too. The LUT has the key per pixel, as the DCTL does.
+- **LUT interpolation.** The Density LUT gives exact greys a sharp lift (+0.04 at about 60 %) that near-greys don't get. Trilinear interpolation smears that spike and bends the grey ramp backwards. So the DCTL reads every LUT at its lattice points and interpolates tetrahedrally itself: greys stay on the LUT's own grey axis, whatever the project's LUT interpolation is set to.
+- **v1.0 → v1.1.** v1.0 rebuilt Diffusion, Hue Adjustments, Contrast and Shadows from the curve points stored in the .drx. Resolve's exports showed that its curves don't pass through those points (they behave more like a Bézier over them). That crushed the shadows: ACEScct 0.10 came out at 0.067 instead of 0.107. v1.1 uses the measured nodes, and matches the chain of exported LUTs to 0.0003 on average.
 
 ## Build and test
 
@@ -71,4 +73,4 @@ python3 tools/build_dctl.py               # regenerate the DCTL from src/ and to
 python3 tests/test_aces_contrast.py       # compiles the DCTL on the host (C++11 and C99, -Werror) and checks it
 ```
 
-`tools/mc_aces_contrast.py` is the reference model and holds all the node data. The tests run the generated DCTL on the CPU (with `tests/mca_shim.h`) against it. They check that it matches the model at the defaults and at random settings, returns the exported LUTs on their lattice, gives an exact Compensation, keeps every grey ramp rising, and follows the DCTL style rules.
+`tools/mc_aces_contrast.py` is the reference model and holds all the node data. The tests run the generated DCTL on the CPU (with `tests/mca_shim.h`) against it. They check that it matches the model at the defaults and at random settings, returns the exported LUTs on their lattice, follows the measured Diffusion curve, gives an exact Compensation, keeps every grey ramp rising, and follows the DCTL style rules.

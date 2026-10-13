@@ -1,0 +1,498 @@
+// MarkCaptures MC ACES Contrast
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
+
+// ============================================================================
+//  MC_ACES-Contrast-v1.1.dctl  -  MC ACES Contrast
+//  ---------------------------------------------------------------------------
+//  The "Contrast" group of the MarkCaptures PowerGrade as one DCTL for
+//  DaVinci Resolve Studio.  The eight nodes run in the PowerGrade's order, in
+//  ACEScct, with their PowerGrade values as the defaults:
+//
+//      1 Diffusion        custom curve, measured from Resolve (per channel)
+//      2 Density          Color Warper + HSV curves              (LUT)
+//      3 Compensation     exposure -0.30 stop
+//      4 Hue Adjustments  Hue vs Hue and Hue vs Sat curves       (LUT)
+//      5 Midtones         contrast 1.1 @ 0.435 and saturation 0.9, inside a
+//                         luminance key (58.3 - 61.4 %)
+//      6 Contrast         custom curve                           (LUT)
+//      7 Shadows          blue curve with its luminance key      (LUT)
+//      8 Sat. Fix         Hue vs Sat warper + Chroma-Luma grid   (LUT)
+//      then the extra Contrast / Saturation / Exposure and Blend
+//
+//  Each node has a strength in percent: out = in + strength x (node - in);
+//  100 is the PowerGrade, 0 switches the node off, above 100 pushes it further.
+//
+//  LUT FILES
+//  Five nodes are Resolve's own LUTs of the original nodes (65 point,
+//  DaVinci Wide Gamut / Intermediate).  Keep the five .cube files in the same
+//  folder as this DCTL:
+//      MC_ACES_Contrast_Density.cube    MC_ACES_Contrast_Hue.cube
+//      MC_ACES_Contrast_Contrast.cube   MC_ACES_Contrast_Shadows.cube
+//      MC_ACES_Contrast_SatFix.cube
+//  They are read at lattice points and interpolated tetrahedrally here, so the
+//  result is the same whatever LUT interpolation the project uses.
+//
+//  MIDTONES KEY
+//  In the PowerGrade the Midtones key is cleaned up spatially (Denoise 100).
+//  A DCTL works per pixel, and with the key's own soft edges the contrast
+//  would bend the tone curve backwards at the top of the key, so its soft
+//  edges are widened just enough to keep the curve rising.  The Shadows key
+//  (Denoise 80) is likewise per pixel here.
+//
+//  POWER GRADE ORDER (DaVinci Wide Gamut)
+//    [camera log] -> [CST to DWG / DaVinci Intermediate] -> [corrections]
+//      -> [MC ACES Contrast  Colour Space: DaVinci Wide Gamut Intermediate]
+//      -> [CST DWG / DaVinci Intermediate -> Rec.709]
+//  In an ACES project (ACEScct timeline) set Colour Space to ACEScct.
+//
+//  Version : 1.1
+//  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
+//            You may use this file for personal and commercial grading work.
+//            You may not redistribute, share, sell, sublicense or publish it,
+//            in whole or in part.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+//  UI
+// ----------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(uiBlend, Blend, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiBlend, "Strength of the whole node, in percent: 0 returns the input.")
+DEFINE_UI_PARAMS(uiDiffusion, 1 Diffusion, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiDiffusion, "Diffusion curve, in percent (100 = PowerGrade): a gentle darkening that grows towards the highlights (middle grey -0.03, white -0.09 ACEScct).")
+DEFINE_UI_PARAMS(uiDensity, 2 Density, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiDensity, "Density node, in percent (100 = PowerGrade): richer saturation with saturated colours made denser (darker), most in blues, purples and greens. Needs MC_ACES_Contrast_Density.cube next to the DCTL.")
+DEFINE_UI_PARAMS(uiCompensation, 3 Compensation, DCTLUI_SLIDER_FLOAT, -0.30, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiCompensation, "Exposure after Density, in stops (PowerGrade -0.30).")
+DEFINE_UI_PARAMS(uiHue, 4 Hue Adjustments, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHue, "Hue vs Hue and Hue vs Sat curves, in percent (100 = PowerGrade): mainly on the blues. Needs MC_ACES_Contrast_Hue.cube next to the DCTL.")
+DEFINE_UI_PARAMS(uiMidtones, 5 Midtones, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiMidtones, "Midtones node, in percent (100 = PowerGrade): contrast 1.1 and saturation 0.9 inside the luminance key at 58 - 61 % (ACEScct).")
+DEFINE_UI_PARAMS(uiContrastCurve, 6 Contrast Curve, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiContrastCurve, "Contrast curve, in percent (100 = PowerGrade): a gentle S with a lift just above middle grey. Needs MC_ACES_Contrast_Contrast.cube next to the DCTL.")
+DEFINE_UI_PARAMS(uiShadows, 7 Shadows, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiShadows, "Shadows node, in percent (100 = PowerGrade): its blue curve inside its luminance key; greys stay neutral. Needs MC_ACES_Contrast_Shadows.cube next to the DCTL.")
+DEFINE_UI_PARAMS(uiSatFix, 8 Sat Fix, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
+DEFINE_UI_TOOLTIP(uiSatFix, "Sat. Fix node, in percent (100 = PowerGrade): calms reds, oranges and yellow-greens and dark yellows. Needs MC_ACES_Contrast_SatFix.cube next to the DCTL.")
+DEFINE_UI_PARAMS(uiContrast, Contrast, DCTLUI_SLIDER_FLOAT, 1.0, 0.5, 2.0, 0.001)
+DEFINE_UI_TOOLTIP(uiContrast, "Extra contrast after the eight nodes, on ACEScct around Pivot. 1 = off.")
+DEFINE_UI_PARAMS(uiPivot, Pivot, DCTLUI_SLIDER_FLOAT, 0.4135, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiPivot, "Pivot of the extra Contrast, in ACEScct code value (0.4135 = 18 % grey; Resolve's own default is 0.435).")
+DEFINE_UI_PARAMS(uiSaturation, Saturation, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 2.0, 0.001)
+DEFINE_UI_TOOLTIP(uiSaturation, "Extra saturation after the eight nodes, in linear ACES with the brightness kept. 1 = off.")
+DEFINE_UI_PARAMS(uiExposure, Exposure, DCTLUI_SLIDER_FLOAT, 0.0, -4.0, 4.0, 0.01)
+DEFINE_UI_TOOLTIP(uiExposure, "Extra exposure after the eight nodes, in stops. 0 = off.")
+
+DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
+
+DEFINE_UI_PARAMS(uiSpace, Colour Space, DCTLUI_COMBO_BOX, 0, {MCA_DWG, MCA_ACESCCT}, {DaVinci Wide Gamut Intermediate, ACEScct})
+DEFINE_UI_TOOLTIP(uiSpace, "Colour space of this node's input and output: DaVinci Wide Gamut / Intermediate in a DWG project, ACEScct in an ACES project.")
+
+DEFINE_LUT(McaDensityLut, MC_ACES_Contrast_Density.cube)
+DEFINE_LUT(McaHueLut, MC_ACES_Contrast_Hue.cube)
+DEFINE_LUT(McaContrastLut, MC_ACES_Contrast_Contrast.cube)
+DEFINE_LUT(McaShadowsLut, MC_ACES_Contrast_Shadows.cube)
+DEFINE_LUT(McaSatFixLut, MC_ACES_Contrast_SatFix.cube)
+
+
+// ----------------------------------------------------------------------------
+//  Constants and tables (generated from tools/mc_aces_contrast.py)
+// ----------------------------------------------------------------------------
+
+#define MCA_LUT_N 65
+#define MCA_CURVE_N 1025
+
+__CONSTANT__ float MCA_AP1_TO_DWG[9] = {0.914630084f, 0.004451314f, 0.0809186011f, 0.0307714752f, 0.784764301f, 0.184464222f, 0.0674014105f, 0.0829089888f, 0.849689593f};
+__CONSTANT__ float MCA_DWG_TO_AP1[9] = {1.10097755f, 0.00494567714f, -0.105923227f, -0.023173413f, 1.3040763f, -0.280902888f, -0.0850736035f, -0.127638368f, 1.21271198f};
+
+// Diffusion over code 0 .. 1 (measured from Resolve)
+__CONSTANT__ float MCA_DIFFUSION[MCA_CURVE_N] = {
+    0.0f, 0.000886720258f, 0.00177344052f, 0.00266016077f, 0.00354688103f, 0.00443360129f, 0.00532032155f, 0.00620704181f,
+    0.00709376206f, 0.00798048232f, 0.00886720258f, 0.00975392284f, 0.0106406431f, 0.0115273634f, 0.0124140836f, 0.0133008039f,
+    0.0141875241f, 0.0150742444f, 0.0159609646f, 0.0168476849f, 0.0177344052f, 0.0186211254f, 0.0195078457f, 0.0203945659f,
+    0.0212812862f, 0.0221680065f, 0.0230547267f, 0.023941447f, 0.0248281672f, 0.0257148875f, 0.0266016077f, 0.027488328f,
+    0.0283750483f, 0.0292617685f, 0.0301484888f, 0.031035209f, 0.0319219293f, 0.0328086496f, 0.0336953698f, 0.0345820901f,
+    0.0354688103f, 0.0363555306f, 0.0372422508f, 0.0381289711f, 0.0390156914f, 0.0399024116f, 0.0407891319f, 0.0416758521f,
+    0.0425625724f, 0.0434492926f, 0.0443360129f, 0.0452227332f, 0.0461094534f, 0.0469961737f, 0.0478828939f, 0.0487696142f,
+    0.0496563345f, 0.0505430547f, 0.051429775f, 0.0523164952f, 0.0532032155f, 0.0540899357f, 0.054976656f, 0.0558633763f,
+    0.0567500965f, 0.0576368168f, 0.058523537f, 0.0594102573f, 0.0602969776f, 0.0611836978f, 0.0620704181f, 0.0629571383f,
+    0.0638438586f, 0.0647305788f, 0.0656172991f, 0.0665040194f, 0.0673907396f, 0.0682774599f, 0.0691641801f, 0.0700509004f,
+    0.0709376206f, 0.0718243409f, 0.0727110612f, 0.0735977814f, 0.0744845017f, 0.0753712219f, 0.0762579422f, 0.0771446625f,
+    0.0780313827f, 0.078918103f, 0.0798048232f, 0.0806941943f, 0.0815943152f, 0.0824944391f, 0.0833945688f, 0.0842947068f,
+    0.0851948556f, 0.086095018f, 0.0869951965f, 0.0878953936f, 0.088795612f, 0.0896958543f, 0.090596123f, 0.0914964209f,
+    0.0923967503f, 0.0932971141f, 0.0941975147f, 0.0950979547f, 0.0959984367f, 0.0968989627f, 0.0977995346f, 0.0987001544f,
+    0.099600824f, 0.100501545f, 0.10140232f, 0.102303151f, 0.103204039f, 0.104104987f, 0.105005996f, 0.105907069f,
+    0.106808206f, 0.107709411f, 0.108610686f, 0.109512031f, 0.11041345f, 0.111314943f, 0.112216514f, 0.113118165f,
+    0.1140199f, 0.114921724f, 0.115823639f, 0.11672565f, 0.11762776f, 0.118529973f, 0.119432293f, 0.120334724f,
+    0.121237268f, 0.122139931f, 0.123042716f, 0.123945626f, 0.124848665f, 0.125751837f, 0.126655146f, 0.127558596f,
+    0.12846219f, 0.129365931f, 0.130269825f, 0.131173872f, 0.132078069f, 0.132982409f, 0.133886886f, 0.134791494f,
+    0.135696228f, 0.136601082f, 0.137506048f, 0.138411122f, 0.139316297f, 0.140221568f, 0.141126928f, 0.142032371f,
+    0.142937891f, 0.143843483f, 0.14474914f, 0.145654856f, 0.146560626f, 0.147466443f, 0.148372301f, 0.149278195f,
+    0.150184117f, 0.151090063f, 0.151996027f, 0.152902005f, 0.153807997f, 0.154714004f, 0.155620027f, 0.156526065f,
+    0.157432119f, 0.15833819f, 0.159244278f, 0.160150383f, 0.161056505f, 0.161962645f, 0.162868804f, 0.163774982f,
+    0.164681178f, 0.165587394f, 0.16649363f, 0.167399886f, 0.168306163f, 0.169212461f, 0.17011878f, 0.171025121f,
+    0.171931484f, 0.172837869f, 0.173744275f, 0.174650703f, 0.175557152f, 0.176463622f, 0.177370112f, 0.178276623f,
+    0.179183152f, 0.180089702f, 0.18099627f, 0.181902857f, 0.182809463f, 0.183716087f, 0.184622728f, 0.185529387f,
+    0.186436063f, 0.187342755f, 0.188249465f, 0.18915619f, 0.190062932f, 0.190969694f, 0.191876479f, 0.192783293f,
+    0.19369014f, 0.194597022f, 0.195503946f, 0.196410914f, 0.19731793f, 0.198225f, 0.199132127f, 0.200039315f,
+    0.200946568f, 0.201853891f, 0.202761288f, 0.203668762f, 0.204576318f, 0.205483961f, 0.206391693f, 0.207299516f,
+    0.208207432f, 0.209115441f, 0.210023542f, 0.210931737f, 0.211840026f, 0.212748409f, 0.213656888f, 0.214565461f,
+    0.215474131f, 0.216382897f, 0.217291761f, 0.218200721f, 0.21910978f, 0.220018937f, 0.220928192f, 0.221837548f,
+    0.222747002f, 0.223656555f, 0.224566207f, 0.225475957f, 0.226385805f, 0.22729575f, 0.228205792f, 0.22911593f,
+    0.230026165f, 0.230936495f, 0.23184692f, 0.232757441f, 0.233668055f, 0.234578764f, 0.235489567f, 0.236400463f,
+    0.237311451f, 0.238222533f, 0.239133705f, 0.24004497f, 0.240956325f, 0.24186777f, 0.242779305f, 0.24369093f,
+    0.244602643f, 0.245514445f, 0.246426334f, 0.247338311f, 0.248250375f, 0.249162525f, 0.25007476f, 0.250987081f,
+    0.251899485f, 0.25281197f, 0.253724531f, 0.254637166f, 0.255549872f, 0.256462645f, 0.257375483f, 0.258288383f,
+    0.259201341f, 0.260114354f, 0.261027419f, 0.261940533f, 0.262853694f, 0.263766897f, 0.26468014f, 0.265593418f,
+    0.266506727f, 0.267420062f, 0.268333418f, 0.269246789f, 0.27016017f, 0.271073557f, 0.271986945f, 0.272900328f,
+    0.273813702f, 0.274727062f, 0.275640401f, 0.276553716f, 0.277467002f, 0.278380254f, 0.279293472f, 0.280206658f,
+    0.281119813f, 0.282032941f, 0.282946043f, 0.283859121f, 0.284772176f, 0.285685212f, 0.286598229f, 0.287511229f,
+    0.288424216f, 0.28933719f, 0.290250154f, 0.291163109f, 0.292076058f, 0.292989002f, 0.293901943f, 0.294814883f,
+    0.295727824f, 0.296640768f, 0.297553716f, 0.298466671f, 0.299379634f, 0.300292608f, 0.301205593f, 0.302118592f,
+    0.303031607f, 0.30394464f, 0.304857689f, 0.305770749f, 0.306683817f, 0.307596887f, 0.308509955f, 0.309423015f,
+    0.310336064f, 0.311249096f, 0.312162106f, 0.313075091f, 0.313988044f, 0.314900962f, 0.315813839f, 0.316726672f,
+    0.31763946f, 0.318552206f, 0.319464914f, 0.320377587f, 0.321290227f, 0.322202839f, 0.323115425f, 0.324027989f,
+    0.324940533f, 0.325853062f, 0.326765577f, 0.327678083f, 0.328590582f, 0.329503078f, 0.330415574f, 0.331328072f,
+    0.332240576f, 0.333153088f, 0.334065611f, 0.334978149f, 0.335890703f, 0.336803278f, 0.337715876f, 0.3386285f,
+    0.339541152f, 0.340453836f, 0.341366555f, 0.342279306f, 0.343192085f, 0.344104887f, 0.345017705f, 0.345930536f,
+    0.346843375f, 0.347756215f, 0.348669052f, 0.349581881f, 0.350494697f, 0.351407495f, 0.352320268f, 0.353233014f,
+    0.354145727f, 0.355058407f, 0.355971055f, 0.356883669f, 0.35779625f, 0.358708796f, 0.359621308f, 0.360533785f,
+    0.361446227f, 0.362358634f, 0.363271005f, 0.364183339f, 0.365095637f, 0.366007897f, 0.366920115f, 0.367832286f,
+    0.368744406f, 0.369656469f, 0.370568471f, 0.371480408f, 0.372392275f, 0.373304066f, 0.374215778f, 0.375127406f,
+    0.376038944f, 0.376950389f, 0.377861738f, 0.378772992f, 0.379684157f, 0.380595235f, 0.381506231f, 0.382417148f,
+    0.383327991f, 0.384238763f, 0.385149467f, 0.386060109f, 0.386970691f, 0.387881218f, 0.388791692f, 0.389702119f,
+    0.390612503f, 0.391522846f, 0.392433154f, 0.39334343f, 0.394253678f, 0.395163902f, 0.396074107f, 0.396984296f,
+    0.397894473f, 0.398804643f, 0.399714809f, 0.400624976f, 0.401535145f, 0.402445316f, 0.403355486f, 0.404265653f,
+    0.405175816f, 0.406085973f, 0.406996121f, 0.407906259f, 0.408816384f, 0.409726496f, 0.410636591f, 0.411546668f,
+    0.412456725f, 0.413366761f, 0.414276777f, 0.415186777f, 0.416096759f, 0.417006728f, 0.417916683f, 0.418826627f,
+    0.419736562f, 0.420646487f, 0.421556407f, 0.422466321f, 0.423376232f, 0.42428614f, 0.425196045f, 0.426105942f,
+    0.427015828f, 0.427925697f, 0.428835545f, 0.429745369f, 0.430655164f, 0.431564926f, 0.43247465f, 0.433384333f,
+    0.434293971f, 0.435203558f, 0.436113092f, 0.437022571f, 0.437931998f, 0.438841373f, 0.439750697f, 0.440659972f,
+    0.441569199f, 0.442478378f, 0.443387511f, 0.4442966f, 0.445205645f, 0.446114647f, 0.447023608f, 0.447932528f,
+    0.448841404f, 0.449750231f, 0.450659008f, 0.45156773f, 0.452476393f, 0.453384995f, 0.454293531f, 0.455201999f,
+    0.456110394f, 0.457018714f, 0.457926954f, 0.458835112f, 0.459743186f, 0.460651177f, 0.461559089f, 0.462466921f,
+    0.463374677f, 0.464282358f, 0.465189966f, 0.466097503f, 0.46700497f, 0.46791237f, 0.468819704f, 0.469726973f,
+    0.47063418f, 0.471541323f, 0.472448397f, 0.473355401f, 0.47426233f, 0.475169181f, 0.476075951f, 0.476982637f,
+    0.477889235f, 0.478795742f, 0.479702154f, 0.480608469f, 0.481514683f, 0.482420794f, 0.483326805f, 0.484232718f,
+    0.485138535f, 0.486044261f, 0.486949897f, 0.487855446f, 0.48876091f, 0.489666293f, 0.490571597f, 0.491476826f,
+    0.49238198f, 0.493287064f, 0.494192077f, 0.495097014f, 0.496001874f, 0.496906653f, 0.497811347f, 0.498715954f,
+    0.499620471f, 0.500524893f, 0.501429218f, 0.502333443f, 0.503237565f, 0.504141579f, 0.505045485f, 0.505949282f,
+    0.506852974f, 0.507756561f, 0.508660046f, 0.509563431f, 0.510466716f, 0.511369906f, 0.512273f, 0.513176002f,
+    0.514078913f, 0.514981734f, 0.515884468f, 0.516787115f, 0.51768967f, 0.518592129f, 0.51949449f, 0.520396749f,
+    0.521298901f, 0.522200944f, 0.523102874f, 0.524004686f, 0.524906378f, 0.525807946f, 0.526709386f, 0.527610695f,
+    0.528511873f, 0.529412921f, 0.530313841f, 0.531214634f, 0.532115301f, 0.533015843f, 0.533916262f, 0.534816558f,
+    0.535716733f, 0.536616787f, 0.537516723f, 0.538416541f, 0.539316241f, 0.540215818f, 0.541115271f, 0.542014594f,
+    0.542913784f, 0.543812838f, 0.544711752f, 0.545610522f, 0.546509146f, 0.547407618f, 0.548305936f, 0.549204096f,
+    0.550102094f, 0.550999932f, 0.551897609f, 0.552795127f, 0.553692488f, 0.554589692f, 0.55548674f, 0.556383634f,
+    0.557280375f, 0.558176963f, 0.559073401f, 0.559969689f, 0.560865828f, 0.561761818f, 0.562657656f, 0.56355334f,
+    0.564448867f, 0.565344235f, 0.56623944f, 0.56713448f, 0.568029352f, 0.568924054f, 0.569818583f, 0.570712936f,
+    0.571607111f, 0.572501105f, 0.573394921f, 0.574288563f, 0.575182037f, 0.576075347f, 0.576968496f, 0.57786149f,
+    0.578754334f, 0.579647031f, 0.580539587f, 0.581432005f, 0.582324291f, 0.583216449f, 0.584108483f, 0.585000399f,
+    0.585892201f, 0.586783896f, 0.587675486f, 0.588566979f, 0.589458379f, 0.59034969f, 0.591240919f, 0.592132069f,
+    0.593023147f, 0.593914157f, 0.594805103f, 0.595695984f, 0.596586798f, 0.597477541f, 0.59836821f, 0.599258803f,
+    0.600149315f, 0.601039745f, 0.601930088f, 0.602820342f, 0.603710504f, 0.60460057f, 0.605490539f, 0.606380407f,
+    0.607270176f, 0.608159847f, 0.609049422f, 0.609938901f, 0.610828285f, 0.611717576f, 0.612606774f, 0.61349588f,
+    0.614384897f, 0.615273824f, 0.616162663f, 0.617051415f, 0.617940075f, 0.61882864f, 0.619717105f, 0.620605464f,
+    0.621493714f, 0.622381849f, 0.623269865f, 0.624157756f, 0.625045519f, 0.625933149f, 0.62682064f, 0.627707989f,
+    0.628595192f, 0.62948225f, 0.630369165f, 0.631255936f, 0.632142565f, 0.633029053f, 0.633915399f, 0.634801607f,
+    0.635687675f, 0.636573605f, 0.637459397f, 0.638345054f, 0.639230573f, 0.640115954f, 0.641001192f, 0.641886283f,
+    0.642771223f, 0.643656008f, 0.644540635f, 0.645425099f, 0.646309397f, 0.647193525f, 0.648077478f, 0.648961253f,
+    0.649844846f, 0.650728256f, 0.651611482f, 0.652494526f, 0.653377388f, 0.65426007f, 0.655142571f, 0.656024893f,
+    0.656907037f, 0.657789003f, 0.658670792f, 0.659552406f, 0.660433844f, 0.661315107f, 0.662196194f, 0.663077104f,
+    0.663957836f, 0.664838387f, 0.665718758f, 0.666598945f, 0.667478948f, 0.668358766f, 0.669238396f, 0.670117838f,
+    0.67099709f, 0.671876151f, 0.672755022f, 0.673633704f, 0.674512202f, 0.675390517f, 0.676268652f, 0.677146611f,
+    0.678024396f, 0.67890201f, 0.679779455f, 0.680656735f, 0.681533852f, 0.68241081f, 0.683287609f, 0.684164248f,
+    0.685040725f, 0.685917037f, 0.686793181f, 0.687669154f, 0.688544954f, 0.689420578f, 0.690296023f, 0.691171288f,
+    0.692046368f, 0.692921261f, 0.693795965f, 0.69467048f, 0.695544807f, 0.69641895f, 0.697292909f, 0.698166688f,
+    0.699040288f, 0.699913711f, 0.70078696f, 0.701660038f, 0.702532945f, 0.703405684f, 0.704278258f, 0.705150668f,
+    0.70602291f, 0.706894982f, 0.707766881f, 0.708638602f, 0.709510144f, 0.710381502f, 0.711252673f, 0.712123654f,
+    0.712994441f, 0.713865032f, 0.714735423f, 0.71560561f, 0.716475595f, 0.717345378f, 0.718214962f, 0.719084349f,
+    0.719953541f, 0.720822541f, 0.72169135f, 0.722559971f, 0.723428405f, 0.724296655f, 0.725164723f, 0.726032612f,
+    0.726900321f, 0.727767849f, 0.728635192f, 0.729502347f, 0.730369311f, 0.731236082f, 0.732102655f, 0.732969027f,
+    0.733835197f, 0.734701159f, 0.735566912f, 0.736432452f, 0.737297777f, 0.738162885f, 0.73902778f, 0.739892464f,
+    0.740756939f, 0.741621207f, 0.74248527f, 0.74334913f, 0.744212789f, 0.745076251f, 0.745939516f, 0.746802587f,
+    0.747665466f, 0.748528154f, 0.749390648f, 0.750252945f, 0.751115042f, 0.751976935f, 0.752838622f, 0.753700099f,
+    0.754561364f, 0.755422412f, 0.756283242f, 0.757143849f, 0.758004231f, 0.758864385f, 0.75972431f, 0.760584009f,
+    0.761443482f, 0.762302732f, 0.763161759f, 0.764020565f, 0.764879152f, 0.76573752f, 0.766595673f, 0.76745361f,
+    0.768311333f, 0.769168845f, 0.770026144f, 0.770883229f, 0.771740095f, 0.772596741f, 0.773453163f, 0.774309358f,
+    0.775165323f, 0.776021055f, 0.776876552f, 0.777731809f, 0.778586825f, 0.779441596f, 0.780296119f, 0.781150395f,
+    0.782004427f, 0.782858217f, 0.783711765f, 0.784565076f, 0.78541815f, 0.78627099f, 0.787123598f, 0.787975975f,
+    0.788828125f, 0.789680049f, 0.79053175f, 0.791383226f, 0.792234476f, 0.793085497f, 0.793936285f, 0.794786837f,
+    0.79563715f, 0.796487221f, 0.797337047f, 0.798186625f, 0.799035952f, 0.799885025f, 0.80073384f, 0.801582395f,
+    0.802430693f, 0.803278736f, 0.804126529f, 0.804974075f, 0.805821377f, 0.80666844f, 0.807515265f, 0.808361858f,
+    0.809208221f, 0.810054359f, 0.810900274f, 0.81174597f, 0.812591449f, 0.81343671f, 0.814281751f, 0.815126573f,
+    0.815971175f, 0.816815554f, 0.817659711f, 0.818503644f, 0.819347353f, 0.820190836f, 0.821034093f, 0.821877123f,
+    0.822719926f, 0.823562507f, 0.824404873f, 0.82524703f, 0.826088985f, 0.826930744f, 0.827772315f, 0.828613703f,
+    0.829454915f, 0.830295958f, 0.831136838f, 0.831977563f, 0.832818137f, 0.833658568f, 0.834498857f, 0.83533901f,
+    0.836179029f, 0.837018918f, 0.837858682f, 0.838698323f, 0.839537845f, 0.840377252f, 0.841216547f, 0.842055735f,
+    0.842894819f, 0.843733803f, 0.844572695f, 0.845411502f, 0.846250234f, 0.847088897f, 0.847927501f, 0.848766052f,
+    0.84960456f, 0.850443032f, 0.851281477f, 0.852119902f, 0.852958315f, 0.853796725f, 0.854635134f, 0.855473544f,
+    0.856311954f, 0.857150363f, 0.857988773f, 0.858827182f, 0.859665592f, 0.860504002f, 0.861342411f, 0.862180821f,
+    0.86301923f, 0.86385764f, 0.864696049f, 0.865534459f, 0.866372869f, 0.867211278f, 0.868049688f, 0.868888097f,
+    0.869726507f, 0.870564917f, 0.871403326f, 0.872241736f, 0.873080145f, 0.873918555f, 0.874756964f, 0.875595374f,
+    0.876433784f, 0.877272193f, 0.878110603f, 0.878949012f, 0.879787422f, 0.880625832f, 0.881464241f, 0.882302651f,
+    0.88314106f, 0.88397947f, 0.88481788f, 0.885656289f, 0.886494699f, 0.887333108f, 0.888171518f, 0.889009927f,
+    0.889848337f, 0.890686747f, 0.891525156f, 0.892363566f, 0.893201975f, 0.894040385f, 0.894878795f, 0.895717204f,
+    0.896555614f, 0.897394023f, 0.898232433f, 0.899070842f, 0.899909252f, 0.900747662f, 0.901586071f, 0.902424481f,
+    0.90326289f, 0.9041013f, 0.90493971f, 0.905778119f, 0.906616529f, 0.907454938f, 0.908293348f, 0.909131757f,
+    0.909970167f
+};
+
+// Diffusion: slope of the straight run from (0, 0) to its first measured point
+// (x0), and its slope above the last one (x1)
+#define MCA_DIFFUSION_X0 0.088674f
+#define MCA_DIFFUSION_M0 0.908001544f
+#define MCA_DIFFUSION_X1 0.93401f
+#define MCA_DIFFUSION_Y1 0.853315679f
+#define MCA_DIFFUSION_M1 0.858531414f
+
+#define MCA_MT_CONTRAST 1.1f
+#define MCA_MT_PIVOT 0.435f
+#define MCA_MT_SAT 0.9f
+#define MCA_MT_LOW 0.583216667f
+#define MCA_MT_HIGH 0.613986015f
+#define MCA_MT_LOW_SOFT 0.0335663557f
+#define MCA_MT_HIGH_SOFT 0.0139859915f
+#define MCA_MT_SOFT_K 2.5f
+#define MCA_MT_SOFT_MARGIN 0.05f
+#define MCA_AP1_YR 0.2722287168f
+#define MCA_AP1_YG 0.6740817658f
+#define MCA_AP1_YB 0.0536895174f
+#define MCA_LUMA_R 0.2126f
+#define MCA_LUMA_G 0.7152f
+#define MCA_LUMA_B 0.0722f
+
+
+// ----------------------------------------------------------------------------
+//  Colour spaces
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 McaMul33(__CONSTANTREF__ float* m, float3 c)
+{
+    return make_float3(m[0] * c.x + m[1] * c.y + m[2] * c.z,
+                       m[3] * c.x + m[4] * c.y + m[5] * c.z,
+                       m[6] * c.x + m[7] * c.y + m[8] * c.z);
+}
+
+__DEVICE__ float McaDiDecode(float y)
+{
+    return y > 0.02740668f ? _exp2f(_fminf(y, 6.0f) / 0.07329248f - 7.0f) - 0.0075f : y / 10.44426855f;
+}
+
+__DEVICE__ float McaDiEncode(float x)
+{
+    return x > 0.00262409f ? (_log2f(_fmaxf(x + 0.0075f, 1e-30f)) + 7.0f) * 0.07329248f : x * 10.44426855f;
+}
+
+__DEVICE__ float McaCctEncode(float x)
+{
+    return x <= 0.0078125f ? 10.5402377416545f * x + 0.0729055341958355f : (_log2f(_fmaxf(x, 1e-30f)) + 9.72f) / 17.52f;
+}
+
+__DEVICE__ float McaCctDecode(float y)
+{
+    return y > 0.155251141552511f ? _exp2f(_fminf(y, 6.0f) * 17.52f - 9.72f) : (y - 0.0729055341958355f) / 10.5402377416545f;
+}
+
+__DEVICE__ float3 McaCctToLin(float3 c) { return make_float3(McaCctDecode(c.x), McaCctDecode(c.y), McaCctDecode(c.z)); }
+__DEVICE__ float3 McaLinToCct(float3 c) { return make_float3(McaCctEncode(c.x), McaCctEncode(c.y), McaCctEncode(c.z)); }
+
+__DEVICE__ float3 McaDwgToCct(float3 c)
+{
+    float3 l = make_float3(McaDiDecode(c.x), McaDiDecode(c.y), McaDiDecode(c.z));
+    return McaLinToCct(McaMul33(MCA_DWG_TO_AP1, l));
+}
+
+__DEVICE__ float3 McaCctToDwg(float3 c)
+{
+    float3 l = McaMul33(MCA_AP1_TO_DWG, McaCctToLin(c));
+    return make_float3(McaDiEncode(l.x), McaDiEncode(l.y), McaDiEncode(l.z));
+}
+
+__DEVICE__ float McaApY(float3 l) { return MCA_AP1_YR * l.x + MCA_AP1_YG * l.y + MCA_AP1_YB * l.z; }
+__DEVICE__ float McaLuma(float3 c) { return MCA_LUMA_R * c.x + MCA_LUMA_G * c.y + MCA_LUMA_B * c.z; }
+__DEVICE__ float3 McaMix(float3 a, float3 b, float k) { return make_float3(a.x + k * (b.x - a.x), a.y + k * (b.y - a.y), a.z + k * (b.z - a.z)); }
+
+__DEVICE__ float McaSmooth(float e0, float e1, float x)
+{
+    if (e1 <= e0) return x >= e1 ? 1.0f : 0.0f;
+    float t = _saturatef((x - e0) / (e1 - e0));
+    return t * t * (3.0f - 2.0f * t);
+}
+
+
+// ----------------------------------------------------------------------------
+//  Curves
+// ----------------------------------------------------------------------------
+
+// Diffusion: table over code 0 .. 1 between the measured points, straight lines outside
+__DEVICE__ float McaCurve(__CONSTANTREF__ float* t, float x)
+{
+    if (x <= MCA_DIFFUSION_X0) return MCA_DIFFUSION_M0 * x;
+    if (x >= MCA_DIFFUSION_X1) return MCA_DIFFUSION_Y1 + MCA_DIFFUSION_M1 * (x - MCA_DIFFUSION_X1);
+    float p = x * (float)(MCA_CURVE_N - 1);
+    int i = (int)p;
+    if (i > MCA_CURVE_N - 2) i = MCA_CURVE_N - 2;
+    float f = p - (float)i;
+    return t[i] + (t[i + 1] - t[i]) * f;
+}
+
+__DEVICE__ float3 McaCurveRGB(__CONSTANTREF__ float* t, float3 c, float k)
+{
+    return make_float3(c.x + k * (McaCurve(t, c.x) - c.x),
+                       c.y + k * (McaCurve(t, c.y) - c.y),
+                       c.z + k * (McaCurve(t, c.z) - c.z));
+}
+
+
+// ----------------------------------------------------------------------------
+//  Nodes (ACEScct)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 McaMidtonesNode(float3 c, float k)
+{
+    float dlo = _fabs(k * (MCA_MT_CONTRAST - 1.0f) * (MCA_MT_LOW - MCA_MT_PIVOT));
+    float dhi = _fabs(k * (MCA_MT_CONTRAST - 1.0f) * (MCA_MT_HIGH + MCA_MT_SOFT_MARGIN - MCA_MT_PIVOT));
+    float ls = _fmaxf(MCA_MT_LOW_SOFT, MCA_MT_SOFT_K * dlo);
+    float hs = _fmaxf(MCA_MT_HIGH_SOFT, MCA_MT_SOFT_K * dhi);
+    float y = McaLuma(c);
+    float key = McaSmooth(MCA_MT_LOW - ls, MCA_MT_LOW, y) * (1.0f - McaSmooth(MCA_MT_HIGH, MCA_MT_HIGH + hs, y));
+    if (key <= 0.0f) return c;
+    float3 x1 = make_float3((c.x - MCA_MT_PIVOT) * MCA_MT_CONTRAST + MCA_MT_PIVOT,
+                            (c.y - MCA_MT_PIVOT) * MCA_MT_CONTRAST + MCA_MT_PIVOT,
+                            (c.z - MCA_MT_PIVOT) * MCA_MT_CONTRAST + MCA_MT_PIVOT);
+    float3 l = McaCctToLin(x1);
+    float yl = McaApY(l);
+    float3 x2 = McaLinToCct(make_float3(yl + MCA_MT_SAT * (l.x - yl), yl + MCA_MT_SAT * (l.y - yl), yl + MCA_MT_SAT * (l.z - yl)));
+    return McaMix(c, x2, k * key);
+}
+
+// ----------------------------------------------------------------------------
+//  LUT nodes: tetrahedral interpolation from four lattice reads
+// ----------------------------------------------------------------------------
+
+typedef struct { float3 c, p0, p1, p2, p3; float w0, w1, w2, w3; } McaTet;
+
+// 0 .. 1, and NaN -> 0, so a lattice index is always valid
+__DEVICE__ float McaUnit(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }
+
+__DEVICE__ float McaLatIndex(float v)
+{
+    return _fminf(_floor(McaUnit(v) * (float)(MCA_LUT_N - 1)), (float)(MCA_LUT_N - 2));
+}
+
+__DEVICE__ McaTet McaTetSetup(float3 c)
+{
+    McaTet t;
+    float s = 1.0f / (float)(MCA_LUT_N - 1);
+    float r = McaLatIndex(c.x), g = McaLatIndex(c.y), b = McaLatIndex(c.z);
+    float fr = McaUnit(c.x) * (float)(MCA_LUT_N - 1) - r;
+    float fg = McaUnit(c.y) * (float)(MCA_LUT_N - 1) - g;
+    float fb = McaUnit(c.z) * (float)(MCA_LUT_N - 1) - b;
+    float3 a1, a2;
+    float f1, f2, f3;
+    if (fr > fg)
+    {
+        if (fg > fb)      { a1 = make_float3(1.0f, 0.0f, 0.0f); a2 = make_float3(1.0f, 1.0f, 0.0f); f1 = fr; f2 = fg; f3 = fb; }
+        else if (fr > fb) { a1 = make_float3(1.0f, 0.0f, 0.0f); a2 = make_float3(1.0f, 0.0f, 1.0f); f1 = fr; f2 = fb; f3 = fg; }
+        else              { a1 = make_float3(0.0f, 0.0f, 1.0f); a2 = make_float3(1.0f, 0.0f, 1.0f); f1 = fb; f2 = fr; f3 = fg; }
+    }
+    else
+    {
+        if (fb > fg)      { a1 = make_float3(0.0f, 0.0f, 1.0f); a2 = make_float3(0.0f, 1.0f, 1.0f); f1 = fb; f2 = fg; f3 = fr; }
+        else if (fb > fr) { a1 = make_float3(0.0f, 1.0f, 0.0f); a2 = make_float3(0.0f, 1.0f, 1.0f); f1 = fg; f2 = fb; f3 = fr; }
+        else              { a1 = make_float3(0.0f, 1.0f, 0.0f); a2 = make_float3(1.0f, 1.0f, 0.0f); f1 = fg; f2 = fr; f3 = fb; }
+    }
+    t.c = make_float3(McaUnit(c.x), McaUnit(c.y), McaUnit(c.z));
+    t.p0 = make_float3(r * s, g * s, b * s);
+    t.p1 = make_float3((r + a1.x) * s, (g + a1.y) * s, (b + a1.z) * s);
+    t.p2 = make_float3((r + a2.x) * s, (g + a2.y) * s, (b + a2.z) * s);
+    t.p3 = make_float3((r + 1.0f) * s, (g + 1.0f) * s, (b + 1.0f) * s);
+    t.w0 = 1.0f - f1; t.w1 = f1 - f2; t.w2 = f2 - f3; t.w3 = f3;
+    return t;
+}
+
+// in + k (LUT(clamp(in)) - clamp(in)): values outside 0 .. 1 keep their excess
+__DEVICE__ float3 McaTetFinish(float3 in, McaTet t, float3 v0, float3 v1, float3 v2, float3 v3, float k)
+{
+    float3 o = make_float3(t.w0 * v0.x + t.w1 * v1.x + t.w2 * v2.x + t.w3 * v3.x,
+                           t.w0 * v0.y + t.w1 * v1.y + t.w2 * v2.y + t.w3 * v3.y,
+                           t.w0 * v0.z + t.w1 * v1.z + t.w2 * v2.z + t.w3 * v3.z);
+    return make_float3(in.x + k * (o.x - t.c.x), in.y + k * (o.y - t.c.y), in.z + k * (o.z - t.c.z));
+}
+
+// APPLY_LUT is kept inside transform()
+#define MCA_LUT_NODE(LUT, IN, K, OUT) { \
+    McaTet tt = McaTetSetup(IN); \
+    float3 v0 = APPLY_LUT(tt.p0.x, tt.p0.y, tt.p0.z, LUT); \
+    float3 v1 = APPLY_LUT(tt.p1.x, tt.p1.y, tt.p1.z, LUT); \
+    float3 v2 = APPLY_LUT(tt.p2.x, tt.p2.y, tt.p2.z, LUT); \
+    float3 v3 = APPLY_LUT(tt.p3.x, tt.p3.y, tt.p3.z, LUT); \
+    OUT = McaTetFinish(IN, tt, v0, v1, v2, v3, K); }
+
+
+// ----------------------------------------------------------------------------
+//  Main
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    float3 src = make_float3(p_R, p_G, p_B);
+    if (uiBypass) return src;
+
+    float3 c = uiSpace == MCA_ACESCCT ? src : McaDwgToCct(src);
+    float3 d;
+
+    // 1 Diffusion
+    if (uiDiffusion != 0.0f) c = McaCurveRGB(MCA_DIFFUSION, c, uiDiffusion * 0.01f);
+
+    // 2 Density (DWG/DI)
+    d = McaCctToDwg(c);
+    if (uiDensity != 0.0f) MCA_LUT_NODE(McaDensityLut, d, uiDensity * 0.01f, d)
+
+    // 3 Compensation (linear)
+    float e = _exp2f(uiCompensation);
+    d = make_float3(McaDiEncode(McaDiDecode(d.x) * e), McaDiEncode(McaDiDecode(d.y) * e), McaDiEncode(McaDiDecode(d.z) * e));
+
+    // 4 Hue Adjustments (DWG/DI)
+    if (uiHue != 0.0f) MCA_LUT_NODE(McaHueLut, d, uiHue * 0.01f, d)
+
+    // 5 Midtones (ACEScct)
+    if (uiMidtones != 0.0f) d = McaCctToDwg(McaMidtonesNode(McaDwgToCct(d), uiMidtones * 0.01f));
+
+    // 6 Contrast, 7 Shadows, 8 Sat. Fix (DWG/DI)
+    if (uiContrastCurve != 0.0f) MCA_LUT_NODE(McaContrastLut, d, uiContrastCurve * 0.01f, d)
+    if (uiShadows != 0.0f) MCA_LUT_NODE(McaShadowsLut, d, uiShadows * 0.01f, d)
+    if (uiSatFix != 0.0f) MCA_LUT_NODE(McaSatFixLut, d, uiSatFix * 0.01f, d)
+
+    // extras
+    if (uiContrast != 1.0f || uiSaturation != 1.0f || uiExposure != 0.0f)
+    {
+        c = McaDwgToCct(d);
+        if (uiContrast != 1.0f)
+            c = make_float3((c.x - uiPivot) * uiContrast + uiPivot, (c.y - uiPivot) * uiContrast + uiPivot, (c.z - uiPivot) * uiContrast + uiPivot);
+        if (uiSaturation != 1.0f || uiExposure != 0.0f)
+        {
+            float x = _exp2f(uiExposure);
+            float3 q = McaCctToLin(c);
+            q = make_float3(q.x * x, q.y * x, q.z * x);
+            if (uiSaturation != 1.0f)
+            {
+                float yl = McaApY(q);
+                q = make_float3(yl + uiSaturation * (q.x - yl), yl + uiSaturation * (q.y - yl), yl + uiSaturation * (q.z - yl));
+            }
+            c = McaLinToCct(q);
+        }
+        d = McaCctToDwg(c);
+    }
+
+    float3 out = uiSpace == MCA_ACESCCT ? McaDwgToCct(d) : d;
+    return McaMix(src, out, uiBlend * 0.01f);
+}
+
+// MarkCaptures MC ACES Contrast
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com

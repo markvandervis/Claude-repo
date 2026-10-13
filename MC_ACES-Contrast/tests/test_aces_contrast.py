@@ -125,7 +125,7 @@ def test_static():
     ok = all(abs(defaults[UI[k]] - float(v)) < 1e-9 for k, v in m.DEFAULTS.items())
     check(ok, "UI defaults match the reference model")
     consts = re.findall(r"__CONSTANT__ float \w+\[(\w+)\]", src)
-    sizes = {"MCA_CURVE_N": m.CURVE_N, "MCA_HUE_N": m.HUE_N}
+    sizes = {"MCA_CURVE_N": m.CURVE_N}
     total = sum(4 * (sizes[c] if c in sizes else int(c)) for c in consts)
     check(total < 60000, "constant tables %d bytes (< 64 KB)" % total)
     luts = re.findall(r"^DEFINE_LUT\(\w+, ([^)]+)\)", src, re.M)
@@ -176,18 +176,18 @@ def test_nodes():
     off = {k: 0.0 for k in STRENGTHS}
     # LUT nodes read the lattice exactly: on lattice points the result is the LUT entry
     rng = np.random.default_rng(3)
-    for name in ("density", "satfix"):
+    for name in m.LUT_FILES:
         L = m.lut(name)
         n = L.shape[0]
         idx = rng.integers(0, n, (300, 3))
         px = idx / (n - 1.0)
         kw = dict(off, compensation=0.0)
-        kw[name] = 100.0
+        kw[{"contrast": "contrast_curve"}.get(name, name)] = 100.0
         a = run(px, **kw)
         # Diffusion etc. are off, but the ACEScct round trip still runs: compare with the reference
         b = ref(px, **kw)
         lat = L[idx[:, 2], idx[:, 1], idx[:, 0]]
-        check(np.abs(a - b).max() < 2e-4, "%s alone matches the reference (max %.1e)" % (name, np.abs(a - b).max()))
+        check(rel_err(a, b).max() < 5e-4, "%s alone matches the reference (max %.1e)" % (name, rel_err(a, b).max()))
         inside = np.all((m.dwg_to_cct(px) > 0.0) & (m.dwg_to_cct(px) < 1.2), axis=1)
         check(np.percentile(np.abs(a - lat)[inside], 99) < 1e-3,
               "%s alone returns the exported LUT on its lattice (p99 %.1e)" % (name, np.percentile(np.abs(a - lat)[inside], 99)))
@@ -201,15 +201,15 @@ def test_nodes():
     far = (x < 0.45) | (x > 0.75)
     check(np.abs(a - x)[far].max() < 1e-4, "Midtones leaves greys outside its key alone")
     check(np.abs(a - x)[~far].max() > 0.01, "Midtones changes greys in its key (%.3f)" % np.abs(a - x)[~far].max())
-    # Shadows changes blue only
-    px = sample_pixels(200, 4)
-    a, b = run(px, **dict(off, compensation=0.0, shadows=100.0)), run(px, **dict(off, compensation=0.0))
-    cr, cb = m.dwg_to_cct(a), m.dwg_to_cct(b)
-    check(np.abs(cr[:, :2] - cb[:, :2]).max() < 1e-4 and np.abs(cr[:, 2] - cb[:, 2]).max() > 0.01,
-          "Shadows only moves the blue channel (ACEScct)")
-    # Hue Adjustments leaves greys alone
+    # Diffusion follows the curve measured from Resolve
+    pts = np.array(m.DIFFUSION_MEASURED)
+    a = m.dwg_to_cct(run(grey_dwg(pts[:, 0]), **dict(off, compensation=0.0, diffusion=100.0)))
+    check(np.abs(a[:, 1] - pts[:, 1]).max() < 3e-4, "Diffusion matches Resolve on greys (max %.1e)" % np.abs(a[:, 1] - pts[:, 1]).max())
+    # Hue Adjustments and Shadows leave greys neutral
     g = grey_dwg(np.linspace(0.1, 0.9, 60))
-    check(np.abs(run(g, **dict(off, compensation=0.0, hue=200.0)) - g).max() < 5e-5, "Hue Adjustments keeps greys neutral")
+    for k in ("hue", "shadows"):
+        a = m.dwg_to_cct(run(g, **dict(off, compensation=0.0, **{k: 100.0})))
+        check(np.abs(a - a.mean(1, keepdims=True)).max() < 1e-3, "%s keeps greys neutral" % k)
 
 
 def test_tone():
@@ -219,8 +219,7 @@ def test_tone():
     a = m.dwg_to_cct(run(g))
     d = np.diff(a, axis=0) / np.diff(x)[:, None]
     check(d.min() > 0.2, "defaults: grey ramp rises everywhere (min slope %.2f)" % d.min())
-    check(np.abs(a[:, 0] - a[:, 1]).max() < 2e-3 and np.abs(a[:, 1] - a[:, 2])[x > 0.6].max() < 3e-3,
-          "greys stay near neutral above the Shadows key")
+    check(np.abs(a - a.mean(1, keepdims=True))[x > 0.1].max() < 2e-3, "greys stay neutral")
     for k in ("midtones", "diffusion", "contrast_curve", "density"):
         for s in (50.0, 150.0, 200.0):
             a = m.dwg_to_cct(run(g, **{k: s}))

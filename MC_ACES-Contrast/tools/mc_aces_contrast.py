@@ -6,27 +6,34 @@ MarkCaptures MC ACES Contrast
 All rights reserved; see ../LICENSE.txt.
 
 The "Contrast" compound node of Mark's PowerGrade, rebuilt as one DCTL.  The
-nodes, their settings and the order of the node graph are read from the
-PowerGrade (.drx); Density and Sat. Fix are Color Warper / Chroma-Luma nodes
-whose look is carried by 65-point LUTs exported from Resolve (wrapped as
-DWG/DI -> ACEScct -> node -> DWG/DI, so they are applied in DWG/DI).
+nodes and their order are read from the PowerGrade (.drx).  Every node except
+Midtones is carried by Resolve's own 65-point LUT of it, exported wrapped as
+DWG/DI -> ACEScct -> node -> DWG/DI, so they are applied in DWG/DI; Diffusion
+is a pure per-channel curve, so it is taken from its LUT's grey axis as a 1D
+curve.  Midtones is rebuilt from its settings, because its key is spatial
+(Denoise 100) and its LUT export holds almost nothing.
 
     input  DaVinci Wide Gamut / DaVinci Intermediate (or ACEScct)
       -> ACEScct (AP1)
-      1 Diffusion        custom curve, Y=R=G=B
-      2 Density          LUT (DWG/DI)
+      1 Diffusion        per-channel curve (measured from its LUT)
+      2 Density          LUT
       3 Compensation     HDR global exposure -0.30 stop (linear)
-      4 Hue Adjustments  Hue vs Hue and Hue vs Sat curves
+      4 Hue Adjustments  LUT
       5 Midtones         contrast 1.1 @ 0.435 and HDR saturation 0.9,
                          inside a luminance key (58.3 - 61.4 %)
-      6 Contrast         custom curve, Y=R=G=B
-      7 Shadows          blue curve inside an inverted luminance key (gain 0.8)
-      8 Sat. Fix         LUT (DWG/DI)
+      6 Contrast         LUT
+      7 Shadows          LUT (its key included, per pixel)
+      8 Sat. Fix         LUT
       extras: contrast / pivot, saturation, exposure, blend
       -> back to the input space
 
 Every node has a strength in % (out = in + k (node(in) - in)); at the defaults
 the DCTL reproduces the PowerGrade node by node.
+
+v1.0 rebuilt Diffusion, Hue Adjustments, Contrast and Shadows from the curve
+points stored in the .drx.  Resolve's exports showed its curves do not pass
+through those points (they behave like a Bezier/B-spline over them), which
+crushed the shadows by up to a stop; v1.1 uses the measured nodes instead.
 
 This module is the source of truth: build_dctl.py turns its tables into the
 DCTL, and the tests run the generated DCTL against pixel() here.
@@ -34,10 +41,12 @@ DCTL, and the tests run the generated DCTL against pixel() here.
 import os
 import numpy as np
 
-VERSION = "1.0"
+VERSION = "1.1"
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-LUT_FILES = {"density": "MC_ACES_Contrast_Density.cube", "satfix": "MC_ACES_Contrast_SatFix.cube"}
+LUT_FILES = {"density": "MC_ACES_Contrast_Density.cube", "hue": "MC_ACES_Contrast_Hue.cube",
+             "contrast": "MC_ACES_Contrast_Contrast.cube", "shadows": "MC_ACES_Contrast_Shadows.cube",
+             "satfix": "MC_ACES_Contrast_SatFix.cube"}
 
 # ---------------------------------------------------------------------------
 #  Colour spaces
@@ -86,31 +95,27 @@ def cct_to_dwg(c):
 # ---------------------------------------------------------------------------
 #  Node data, as read from the PowerGrade
 # ---------------------------------------------------------------------------
-# Custom curves: control points in Resolve's 0..1023 code (x, y); the black
-# end point (0, 0) is implicit.  Linked Y/R/G/B curves act once per channel.
-DIFFUSION = ((341.0, 308.240204), (679.67395, 643.54895), (1023.0, 924.72052))
-CONTRAST = ((148.865677, 125.49894), (221.445312, 221.445343), (276.335602, 276.240356),
-            (420.085938, 446.234406), (449.394287, 476.590515), (552.671204, 567.658752),
-            (699.673401, 699.67334), (834.417847, 816.099243), (1023.0, 1023.0))
-SHADOWS_B = ((72.107773, 92.080124), (133.493973, 193.671707), (216.323334, 276.240356),
-             (275.045868, 334.778046), (359.234741, 362.592316), (420.085938, 418.91394),
-             (628.873352, 612.15979), (822.028625, 821.637939), (1023.0, 1023.0))
-
-# Hue curves: periodic cubic Bezier, stored as P, c, c, P, c, c, P ...;
-# x = hue in turns (0 red, 1/3 green, 2/3 blue), y = 0.5 neutral.
-# Hue vs Hue shifts hue by (y - 0.5) turn, Hue vs Sat scales chroma by 2y.
-HUE_HUE = ((-0.360689, 0.479233), (-0.26689, 0.488187), (-0.266422, 0.494411), (-0.172239, 0.497222),
-           (-0.079221, 0.499998), (0.25927, 0.497247), (0.33536, 0.5), (0.407248, 0.502601),
-           (0.407295, 0.520767), (0.47923, 0.520767), (0.559271, 0.520767), (0.559271, 0.479233),
-           (0.639311, 0.479233), (0.733536, 0.479233), (0.733578, 0.494411), (0.827761, 0.497222),
-           (0.920779, 0.499998), (1.25927, 0.497247), (1.33536, 0.5), (1.407248, 0.502601),
-           (1.408033, 0.51049), (1.47923, 0.520767))
-HUE_SAT = ((-0.358663, 0.4377), (-0.270786, 0.467227), (-0.265697, 0.493051), (-0.173252, 0.5),
-           (-0.162105, 0.500838), (0.162107, 0.501597), (0.497467, 0.501597), (0.569402, 0.501597),
-           (0.569402, 0.4377), (0.641337, 0.4377), (0.734043, 0.4377), (0.734303, 0.493051),
-           (0.826748, 0.5), (0.837895, 0.500838), (1.162107, 0.501597), (1.497467, 0.501597),
-           (1.569402, 0.501597), (1.575595, 0.466898), (1.641337, 0.4377))
-HUE_PERIOD_START = 3          # control point P1: one full period of segments starts here
+# Diffusion: the grey axis of Resolve's LUT of the node, as (ACEScct in, out);
+# the node is a linked Y/R/G/B curve and acts per channel (checked on colours:
+# error < 0.001).  Below the first point the curve runs straight to (0, 0).
+DIFFUSION_MEASURED = (
+    (0.088674, 0.080544), (0.104514, 0.095111), (0.122136, 0.111395), (0.142565, 0.130153),
+    (0.165572, 0.151653), (0.186803, 0.171277), (0.20606, 0.189209), (0.223888, 0.205682),
+    (0.240645, 0.221301), (0.256575, 0.236156), (0.271856, 0.250394), (0.286619, 0.264201),
+    (0.300961, 0.27771), (0.314959, 0.290722), (0.328674, 0.303474), (0.342153, 0.316232),
+    (0.355436, 0.328557), (0.368554, 0.340732), (0.381533, 0.353001), (0.394394, 0.364921),
+    (0.407155, 0.376975), (0.419831, 0.388709), (0.432435, 0.400391), (0.444977, 0.412182),
+    (0.457467, 0.42372), (0.469911, 0.435433), (0.482317, 0.446876), (0.494689, 0.458494),
+    (0.507033, 0.469855), (0.519353, 0.481414), (0.531652, 0.492691), (0.543932, 0.504184),
+    (0.556197, 0.515415), (0.568449, 0.526844), (0.580689, 0.538028), (0.592919, 0.549389),
+    (0.60514, 0.560523), (0.617355, 0.571838), (0.629562, 0.582929), (0.641765, 0.593976),
+    (0.653963, 0.605231), (0.666156, 0.616228), (0.678346, 0.627436), (0.690533, 0.638388),
+    (0.702718, 0.649527), (0.7149, 0.660461), (0.727081, 0.671509), (0.739259, 0.682353),
+    (0.751436, 0.693385), (0.763612, 0.704166), (0.775787, 0.715147), (0.787961, 0.725865),
+    (0.800135, 0.736782), (0.812307, 0.747438), (0.824479, 0.758283), (0.83665, 0.768889),
+    (0.848821, 0.779661), (0.860992, 0.790183), (0.873162, 0.800905), (0.885332, 0.811343),
+    (0.897502, 0.821993), (0.909672, 0.83237), (0.921841, 0.842913), (0.93401, 0.853229))
+DIFFUSION_SMOOTH = 1e-5       # smoothing of the LUT's 1e-4 rounding wobble
 
 # Midtones: Primaries contrast 1.1 around pivot 0.435 (ACEScct), HDR Global
 # saturation 0.9 (ACES), inside a luminance qualifier.
@@ -124,11 +129,6 @@ MT_LOW_SOFT, MT_HIGH_SOFT = 0.03356635570526123, 0.013985991477966309
 MT_SOFT_K = 2.5
 MT_SOFT_MARGIN = 0.05
 
-# Shadows: blue curve; luminance qualifier 55.7 - 99.0 % (low soft 4.76 %),
-# inverted, key gain 0.8.
-SH_LOW, SH_HIGH, SH_LOW_SOFT, SH_HIGH_SOFT = 0.5566433072090149, 0.9902098178863525, 0.04755258560180664, 0.0
-SH_GAIN = 0.8
-
 COMPENSATION = -0.30          # stops, HDR Global exposure (linear)
 
 DEFAULTS = dict(blend=100.0, diffusion=100.0, density=100.0, compensation=COMPENSATION, hue=100.0,
@@ -140,85 +140,24 @@ SPACES = ("DaVinci Wide Gamut Intermediate", "ACEScct")
 # ---------------------------------------------------------------------------
 #  Curves
 # ---------------------------------------------------------------------------
-def mono_knots(points, scale=1023.0):
-    """Monotone (Fritsch-Carlson) cubic through (0,0) and the points."""
-    p = sorted(points)
-    x = np.array([0.0] + [a / scale for a, _ in p])
-    y = np.array([0.0] + [b / scale for _, b in p])
-    d = np.diff(y) / np.diff(x)
-    m = np.empty_like(x)
-    m[0], m[-1] = d[0], d[-1]
-    for i in range(1, len(x) - 1):
-        if d[i - 1] * d[i] <= 0:
-            m[i] = 0.0
-        else:   # weighted harmonic mean (Fritsch-Butland), monotone and C1
-            h0, h1 = x[i] - x[i - 1], x[i + 1] - x[i]
-            w0, w1 = 2 * h1 + h0, h1 + 2 * h0
-            m[i] = (w0 + w1) / (w0 / d[i - 1] + w1 / d[i])
-    return x, y, m
+def _diffusion_spline():
+    from scipy.interpolate import make_smoothing_spline
+    p = np.array(DIFFUSION_MEASURED)
+    return make_smoothing_spline(p[:, 0], p[:, 1], lam=DIFFUSION_SMOOTH)
 
 
-def mono_eval(knots, v):
-    x, y, m = knots
+_DIFF = _diffusion_spline()
+_DIFF_X0, _DIFF_X1 = DIFFUSION_MEASURED[0][0], DIFFUSION_MEASURED[-1][0]
+DIFFUSION_M0 = float(_DIFF(_DIFF_X0)) / _DIFF_X0                 # slope of the straight run to (0, 0)
+DIFFUSION_M1 = float(_DIFF.derivative()(_DIFF_X1))               # end slope above the last point
+
+
+def diffusion_curve(v):
     v = np.asarray(v, dtype=float)
-    out = np.empty_like(v)
-    lo, hi = v < x[0], v > x[-1]
-    out[lo] = y[0] + m[0] * (v[lo] - x[0])
-    out[hi] = y[-1] + m[-1] * (v[hi] - x[-1])
-    mid = ~(lo | hi)
-    vm = v[mid]
-    i = np.clip(np.searchsorted(x, vm, side="right") - 1, 0, len(x) - 2)
-    h = x[i + 1] - x[i]
-    t = (vm - x[i]) / h
-    t2, t3 = t * t, t * t * t
-    out[mid] = ((2 * t3 - 3 * t2 + 1) * y[i] + (t3 - 2 * t2 + t) * h * m[i]
-                + (-2 * t3 + 3 * t2) * y[i + 1] + (t3 - t2) * h * m[i + 1])
+    out = np.where(v < _DIFF_X0, DIFFUSION_M0 * v,
+                   np.where(v > _DIFF_X1, float(_DIFF(_DIFF_X1)) + DIFFUSION_M1 * (v - _DIFF_X1),
+                            _DIFF(np.clip(v, _DIFF_X0, _DIFF_X1))))
     return out
-
-
-KN_DIFFUSION = mono_knots(DIFFUSION)
-KN_CONTRAST = mono_knots(CONTRAST)
-KN_SHADOWS = mono_knots(SHADOWS_B)
-
-
-def bezier_periodic(points, start=HUE_PERIOD_START):
-    """One period of a periodic cubic Bezier: list of segments (P0, c1, c2, P1)."""
-    p = np.array(points, dtype=float)
-    segs, x0 = [], p[start, 0]
-    i = start
-    while i + 3 < len(p) and p[i, 0] < x0 + 1.0 - 1e-9:
-        segs.append(p[i:i + 4])
-        i += 3
-    assert abs(segs[-1][3][0] - (x0 + 1.0)) < 1e-4, "hue curve is not periodic"
-    return x0, segs
-
-
-def bezier_eval(curve, h):
-    """y of a periodic Bezier curve at hue h (turns); x(t) is solved by bisection."""
-    x0, segs = curve
-    h = np.asarray(h, dtype=float)
-    u = x0 + np.mod(h - x0, 1.0)
-    out = np.full(u.shape, 0.5)
-    for s in segs:
-        sel = (u >= s[0, 0]) & (u <= s[3, 0])
-        if not sel.any():
-            continue
-        uu = u[sel]
-        a, b = np.zeros_like(uu), np.ones_like(uu)
-        for _ in range(48):
-            t = 0.5 * (a + b)
-            q = 1 - t
-            xt = q ** 3 * s[0, 0] + 3 * q * q * t * s[1, 0] + 3 * q * t * t * s[2, 0] + t ** 3 * s[3, 0]
-            right = xt < uu
-            a, b = np.where(right, t, a), np.where(right, b, t)
-        t = 0.5 * (a + b)
-        q = 1 - t
-        out[sel] = q ** 3 * s[0, 1] + 3 * q * q * t * s[1, 1] + 3 * q * t * t * s[2, 1] + t ** 3 * s[3, 1]
-    return out
-
-
-BZ_HUE_HUE = bezier_periodic(HUE_HUE)
-BZ_HUE_SAT = bezier_periodic(HUE_SAT)
 
 
 # ---------------------------------------------------------------------------
@@ -302,39 +241,8 @@ def smoothstep(e0, e1, x):
     return t * t * (3 - 2 * t)
 
 
-def curve_node(kn, c, k, channels=(0, 1, 2)):
-    out = c.copy()
-    for ch in channels:
-        out[..., ch] = c[..., ch] + k * (mono_eval(kn, c[..., ch]) - c[..., ch])
-    return out
-
-
-def hsv_hue(c):
-    r, g, b = c[..., 0], c[..., 1], c[..., 2]
-    mx, mn = np.maximum(np.maximum(r, g), b), np.minimum(np.minimum(r, g), b)
-    d = mx - mn
-    ds = np.where(d > 1e-10, d, 1.0)
-    h = np.where(mx == r, (g - b) / ds, np.where(mx == g, 2.0 + (b - r) / ds, 4.0 + (r - g) / ds))
-    return np.mod(h / 6.0, 1.0)
-
-
-def rotate_neutral(v, ang):
-    """Rotate vectors v (chroma, mean 0) by ang radians about the neutral axis."""
-    cs, sn = np.cos(ang)[..., None], np.sin(ang)[..., None]
-    u = np.ones(3) / np.sqrt(3.0)
-    cross = np.cross(np.broadcast_to(u, v.shape), v)
-    return v * cs + cross * sn            # u . v = 0 for chroma vectors
-
-
-def hue_node(c, k):
-    if k == 0:
-        return c.copy()
-    h = hsv_hue(c)
-    dh = bezier_eval(BZ_HUE_HUE, h) - 0.5
-    g = 2.0 * bezier_eval(BZ_HUE_SAT, h)
-    m = c.mean(axis=-1, keepdims=True)
-    v = rotate_neutral(c - m, 2 * np.pi * k * dh)
-    return m + v * (1.0 + k * (g - 1.0))[..., None]
+def curve_node(f, c, k):
+    return c + k * (f(c) - c)
 
 
 def soft_edges(k, low, high, low_soft, high_soft):
@@ -354,18 +262,6 @@ def midtones_node(c, k):
     yl = (lin @ AP1_Y)[..., None]
     x2 = cct_enc(yl + MT_SAT * (lin - yl))
     return c + (k * key)[..., None] * (x2 - c)
-
-
-def shadows_node(c, k):
-    if k == 0:
-        return c.copy()
-    y = c @ LUMA
-    sel = smoothstep(SH_LOW - SH_LOW_SOFT, SH_LOW, y) * (1.0 - smoothstep(SH_HIGH, SH_HIGH + SH_HIGH_SOFT, y))
-    key = SH_GAIN * (1.0 - sel)
-    out = c.copy()
-    b = c[..., 2]
-    out[..., 2] = b + k * key * (mono_eval(KN_SHADOWS, b) - b)
-    return out
 
 
 def extras(c, contrast, pivot, saturation, exposure):
@@ -392,15 +288,14 @@ def pixel(rgb, **kw):
     s = lambda v: p[v] / 100.0
     cct = dwg_to_cct(src) if p["space"] == 0 else src.copy()
 
-    cct = curve_node(KN_DIFFUSION, cct, s("diffusion"))
+    cct = curve_node(diffusion_curve, cct, s("diffusion"))
     dwg = lut_node("density", cct_to_dwg(cct), s("density"))
-    lin = di_dec(dwg) * 2.0 ** p["compensation"]
-    cct = cct_enc(lin @ DWG_TO_AP1.T)
-    cct = hue_node(cct, s("hue"))
-    cct = midtones_node(cct, s("midtones"))
-    cct = curve_node(KN_CONTRAST, cct, s("contrast_curve"))
-    cct = shadows_node(cct, s("shadows"))
-    dwg = lut_node("satfix", cct_to_dwg(cct), s("satfix"))
+    dwg = di_enc(di_dec(dwg) * 2.0 ** p["compensation"])
+    dwg = lut_node("hue", dwg, s("hue"))
+    cct = midtones_node(dwg_to_cct(dwg), s("midtones"))
+    dwg = lut_node("contrast", cct_to_dwg(cct), s("contrast_curve"))
+    dwg = lut_node("shadows", dwg, s("shadows"))
+    dwg = lut_node("satfix", dwg, s("satfix"))
 
     if p["contrast"] != 1.0 or p["saturation"] != 1.0 or p["exposure"] != 0.0:
         dwg = cct_to_dwg(extras(dwg_to_cct(dwg), p["contrast"], p["pivot"], p["saturation"], p["exposure"]))
@@ -411,13 +306,8 @@ def pixel(rgb, **kw):
 # ---------------------------------------------------------------------------
 #  Tables for the DCTL
 # ---------------------------------------------------------------------------
-CURVE_N = 1025          # samples of each tone curve over code 0 .. 1
-HUE_N = 512             # samples of each hue curve over one turn
+CURVE_N = 1025          # samples of the Diffusion curve over code 0 .. 1
 
 
-def curve_table(kn):
-    return mono_eval(kn, np.linspace(0.0, 1.0, CURVE_N))
-
-
-def hue_table(bz):
-    return bezier_eval(bz, np.arange(HUE_N) / HUE_N)
+def curve_table():
+    return diffusion_curve(np.linspace(0.0, 1.0, CURVE_N))

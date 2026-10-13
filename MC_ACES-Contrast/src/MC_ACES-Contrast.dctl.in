@@ -9,25 +9,26 @@
 //  DaVinci Resolve Studio.  The eight nodes run in the PowerGrade's order, in
 //  ACEScct, with their PowerGrade values as the defaults:
 //
-//      1 Diffusion        custom curve (Y = R = G = B), soft highlight roll-off
-//      2 Density          Color Warper + HSV curves      (LUT, see below)
+//      1 Diffusion        custom curve, measured from Resolve (per channel)
+//      2 Density          Color Warper + HSV curves              (LUT)
 //      3 Compensation     exposure -0.30 stop
-//      4 Hue Adjustments  Hue vs Hue and Hue vs Sat curves
+//      4 Hue Adjustments  Hue vs Hue and Hue vs Sat curves       (LUT)
 //      5 Midtones         contrast 1.1 @ 0.435 and saturation 0.9, inside a
 //                         luminance key (58.3 - 61.4 %)
-//      6 Contrast         custom curve (Y = R = G = B)
-//      7 Shadows          blue curve inside an inverted luminance key
-//      8 Sat. Fix         Hue vs Sat warper + Chroma-Luma grid  (LUT)
+//      6 Contrast         custom curve                           (LUT)
+//      7 Shadows          blue curve with its luminance key      (LUT)
+//      8 Sat. Fix         Hue vs Sat warper + Chroma-Luma grid   (LUT)
 //      then the extra Contrast / Saturation / Exposure and Blend
 //
 //  Each node has a strength in percent: out = in + strength x (node - in);
 //  100 is the PowerGrade, 0 switches the node off, above 100 pushes it further.
 //
 //  LUT FILES
-//  Density and Sat. Fix are Resolve LUTs of the original nodes (65 point,
-//  DaVinci Wide Gamut / Intermediate).  Keep both .cube files in the same
+//  Five nodes are Resolve's own LUTs of the original nodes (65 point,
+//  DaVinci Wide Gamut / Intermediate).  Keep the five .cube files in the same
 //  folder as this DCTL:
-//      MC_ACES_Contrast_Density.cube
+//      MC_ACES_Contrast_Density.cube    MC_ACES_Contrast_Hue.cube
+//      MC_ACES_Contrast_Contrast.cube   MC_ACES_Contrast_Shadows.cube
 //      MC_ACES_Contrast_SatFix.cube
 //  They are read at lattice points and interpolated tetrahedrally here, so the
 //  result is the same whatever LUT interpolation the project uses.
@@ -36,7 +37,8 @@
 //  In the PowerGrade the Midtones key is cleaned up spatially (Denoise 100).
 //  A DCTL works per pixel, and with the key's own soft edges the contrast
 //  would bend the tone curve backwards at the top of the key, so its soft
-//  edges are widened just enough to keep the curve rising.
+//  edges are widened just enough to keep the curve rising.  The Shadows key
+//  (Denoise 80) is likewise per pixel here.
 //
 //  POWER GRADE ORDER (DaVinci Wide Gamut)
 //    [camera log] -> [CST to DWG / DaVinci Intermediate] -> [corrections]
@@ -59,19 +61,19 @@
 DEFINE_UI_PARAMS(uiBlend, Blend, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiBlend, "Strength of the whole node, in percent: 0 returns the input.")
 DEFINE_UI_PARAMS(uiDiffusion, 1 Diffusion, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
-DEFINE_UI_TOOLTIP(uiDiffusion, "Diffusion curve, in percent (100 = PowerGrade): rolls the highlights off, white comes down about 10 %.")
+DEFINE_UI_TOOLTIP(uiDiffusion, "Diffusion curve, in percent (100 = PowerGrade): a gentle darkening that grows towards the highlights (middle grey -0.03, white -0.09 ACEScct).")
 DEFINE_UI_PARAMS(uiDensity, 2 Density, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
 DEFINE_UI_TOOLTIP(uiDensity, "Density node, in percent (100 = PowerGrade): richer saturation with saturated colours made denser (darker), most in blues, purples and greens. Needs MC_ACES_Contrast_Density.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiCompensation, 3 Compensation, DCTLUI_SLIDER_FLOAT, @@COMPENSATION@@, -2.0, 2.0, 0.01)
 DEFINE_UI_TOOLTIP(uiCompensation, "Exposure after Density, in stops (PowerGrade -0.30).")
 DEFINE_UI_PARAMS(uiHue, 4 Hue Adjustments, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHue, "Hue vs Hue and Hue vs Sat curves, in percent (100 = PowerGrade): pulls cyan-blues and blues together (up to 7.5 degrees) and takes about 12 % saturation out of the blues.")
+DEFINE_UI_TOOLTIP(uiHue, "Hue vs Hue and Hue vs Sat curves, in percent (100 = PowerGrade): mainly on the blues. Needs MC_ACES_Contrast_Hue.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiMidtones, 5 Midtones, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
 DEFINE_UI_TOOLTIP(uiMidtones, "Midtones node, in percent (100 = PowerGrade): contrast 1.1 and saturation 0.9 inside the luminance key at 58 - 61 % (ACEScct).")
 DEFINE_UI_PARAMS(uiContrastCurve, 6 Contrast Curve, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
-DEFINE_UI_TOOLTIP(uiContrastCurve, "Contrast curve, in percent (100 = PowerGrade): a gentle S, deeper blacks and a lift just above middle grey.")
+DEFINE_UI_TOOLTIP(uiContrastCurve, "Contrast curve, in percent (100 = PowerGrade): a gentle S with a lift just above middle grey. Needs MC_ACES_Contrast_Contrast.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiShadows, 7 Shadows, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
-DEFINE_UI_TOOLTIP(uiShadows, "Shadows node, in percent (100 = PowerGrade): lifts blue in the shadows, keyed below about 55 % ACEScct (key gain 0.8).")
+DEFINE_UI_TOOLTIP(uiShadows, "Shadows node, in percent (100 = PowerGrade): its blue curve inside its luminance key; greys stay neutral. Needs MC_ACES_Contrast_Shadows.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiSatFix, 8 Sat Fix, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
 DEFINE_UI_TOOLTIP(uiSatFix, "Sat. Fix node, in percent (100 = PowerGrade): calms reds, oranges and yellow-greens and dark yellows. Needs MC_ACES_Contrast_SatFix.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiContrast, Contrast, DCTLUI_SLIDER_FLOAT, 1.0, 0.5, 2.0, 0.001)
@@ -90,6 +92,9 @@ DEFINE_UI_PARAMS(uiSpace, Colour Space, DCTLUI_COMBO_BOX, 0, {MCA_DWG, MCA_ACESC
 DEFINE_UI_TOOLTIP(uiSpace, "Colour space of this node's input and output: DaVinci Wide Gamut / Intermediate in a DWG project, ACEScct in an ACES project.")
 
 DEFINE_LUT(McaDensityLut, MC_ACES_Contrast_Density.cube)
+DEFINE_LUT(McaHueLut, MC_ACES_Contrast_Hue.cube)
+DEFINE_LUT(McaContrastLut, MC_ACES_Contrast_Contrast.cube)
+DEFINE_LUT(McaShadowsLut, MC_ACES_Contrast_Shadows.cube)
 DEFINE_LUT(McaSatFixLut, MC_ACES_Contrast_SatFix.cube)
 
 
@@ -99,25 +104,20 @@ DEFINE_LUT(McaSatFixLut, MC_ACES_Contrast_SatFix.cube)
 
 #define MCA_LUT_N @@LUT_N@@
 #define MCA_CURVE_N @@CURVE_N@@
-#define MCA_HUE_N @@HUE_N@@
-#define MCA_PI 3.14159265358979f
 
 __CONSTANT__ float MCA_AP1_TO_DWG[9] = {@@AP1_TO_DWG@@};
 __CONSTANT__ float MCA_DWG_TO_AP1[9] = {@@DWG_TO_AP1@@};
 
+// Diffusion over code 0 .. 1 (measured from Resolve)
 __CONSTANT__ float MCA_DIFFUSION[MCA_CURVE_N] = {@@DIFFUSION_TABLE@@};
-__CONSTANT__ float MCA_CONTRAST[MCA_CURVE_N] = {@@CONTRAST_TABLE@@};
-__CONSTANT__ float MCA_SHADOWS[MCA_CURVE_N] = {@@SHADOWS_TABLE@@};
-__CONSTANT__ float MCA_HUE_HUE[MCA_HUE_N] = {@@HUE_HUE_TABLE@@};
-__CONSTANT__ float MCA_HUE_SAT[MCA_HUE_N] = {@@HUE_SAT_TABLE@@};
 
-// end slopes of the tone curves, for code values outside 0 .. 1
+// Diffusion: slope of the straight run from (0, 0) to its first measured point
+// (x0), and its slope above the last one (x1)
+#define MCA_DIFFUSION_X0 @@DIFFUSION_X0@@f
 #define MCA_DIFFUSION_M0 @@DIFFUSION_M0@@f
+#define MCA_DIFFUSION_X1 @@DIFFUSION_X1@@f
+#define MCA_DIFFUSION_Y1 @@DIFFUSION_Y1@@f
 #define MCA_DIFFUSION_M1 @@DIFFUSION_M1@@f
-#define MCA_CONTRAST_M0 @@CONTRAST_M0@@f
-#define MCA_CONTRAST_M1 @@CONTRAST_M1@@f
-#define MCA_SHADOWS_M0 @@SHADOWS_M0@@f
-#define MCA_SHADOWS_M1 @@SHADOWS_M1@@f
 
 #define MCA_MT_CONTRAST @@MT_CONTRAST@@f
 #define MCA_MT_PIVOT @@MT_PIVOT@@f
@@ -128,12 +128,6 @@ __CONSTANT__ float MCA_HUE_SAT[MCA_HUE_N] = {@@HUE_SAT_TABLE@@};
 #define MCA_MT_HIGH_SOFT @@MT_HIGH_SOFT@@f
 #define MCA_MT_SOFT_K @@MT_SOFT_K@@f
 #define MCA_MT_SOFT_MARGIN @@MT_SOFT_MARGIN@@f
-#define MCA_SH_LOW @@SH_LOW@@f
-#define MCA_SH_HIGH @@SH_HIGH@@f
-#define MCA_SH_LOW_SOFT @@SH_LOW_SOFT@@f
-#define MCA_SH_HIGH_SOFT @@SH_HIGH_SOFT@@f
-#define MCA_SH_GAIN @@SH_GAIN@@f
-
 #define MCA_AP1_YR @@AP1_YR@@f
 #define MCA_AP1_YG @@AP1_YG@@f
 #define MCA_AP1_YB @@AP1_YB@@f
@@ -204,11 +198,11 @@ __DEVICE__ float McaSmooth(float e0, float e1, float x)
 //  Curves
 // ----------------------------------------------------------------------------
 
-// tone curve sampled over code 0 .. 1, straight lines with the end slopes outside
-__DEVICE__ float McaCurve(__CONSTANTREF__ float* t, float x, float m0, float m1)
+// Diffusion: table over code 0 .. 1 between the measured points, straight lines outside
+__DEVICE__ float McaCurve(__CONSTANTREF__ float* t, float x)
 {
-    if (x <= 0.0f) return t[0] + m0 * x;
-    if (x >= 1.0f) return t[MCA_CURVE_N - 1] + m1 * (x - 1.0f);
+    if (x <= MCA_DIFFUSION_X0) return MCA_DIFFUSION_M0 * x;
+    if (x >= MCA_DIFFUSION_X1) return MCA_DIFFUSION_Y1 + MCA_DIFFUSION_M1 * (x - MCA_DIFFUSION_X1);
     float p = x * (float)(MCA_CURVE_N - 1);
     int i = (int)p;
     if (i > MCA_CURVE_N - 2) i = MCA_CURVE_N - 2;
@@ -216,59 +210,17 @@ __DEVICE__ float McaCurve(__CONSTANTREF__ float* t, float x, float m0, float m1)
     return t[i] + (t[i + 1] - t[i]) * f;
 }
 
-// periodic hue curve sampled over one turn
-__DEVICE__ float McaHueCurve(__CONSTANTREF__ float* t, float h)
+__DEVICE__ float3 McaCurveRGB(__CONSTANTREF__ float* t, float3 c, float k)
 {
-    float p = h * (float)MCA_HUE_N;
-    p = p - _floor(p / (float)MCA_HUE_N) * (float)MCA_HUE_N;
-    int i = (int)p;
-    if (i >= MCA_HUE_N) i = MCA_HUE_N - 1;
-    if (i < 0) i = 0;
-    int j = i + 1 >= MCA_HUE_N ? 0 : i + 1;
-    float f = p - (float)i;
-    return t[i] + (t[j] - t[i]) * f;
-}
-
-__DEVICE__ float3 McaCurveRGB(__CONSTANTREF__ float* t, float3 c, float m0, float m1, float k)
-{
-    return make_float3(c.x + k * (McaCurve(t, c.x, m0, m1) - c.x),
-                       c.y + k * (McaCurve(t, c.y, m0, m1) - c.y),
-                       c.z + k * (McaCurve(t, c.z, m0, m1) - c.z));
+    return make_float3(c.x + k * (McaCurve(t, c.x) - c.x),
+                       c.y + k * (McaCurve(t, c.y) - c.y),
+                       c.z + k * (McaCurve(t, c.z) - c.z));
 }
 
 
 // ----------------------------------------------------------------------------
 //  Nodes (ACEScct)
 // ----------------------------------------------------------------------------
-
-__DEVICE__ float McaHsvHue(float3 c)
-{
-    float mx = _fmaxf(_fmaxf(c.x, c.y), c.z);
-    float mn = _fminf(_fminf(c.x, c.y), c.z);
-    float d = mx - mn;
-    float ds = d > 1e-10f ? d : 1.0f;
-    float h;
-    if (mx == c.x) h = (c.y - c.z) / ds;
-    else if (mx == c.y) h = 2.0f + (c.z - c.x) / ds;
-    else h = 4.0f + (c.x - c.y) / ds;
-    h = h / 6.0f;
-    return h - _floor(h);
-}
-
-// Hue vs Hue: rotate the colour about the grey axis; Hue vs Sat: scale its distance from grey
-__DEVICE__ float3 McaHueNode(float3 c, float k)
-{
-    float h = McaHsvHue(c);
-    float dh = McaHueCurve(MCA_HUE_HUE, h) - 0.5f;
-    float g = 2.0f * McaHueCurve(MCA_HUE_SAT, h);
-    float m = (c.x + c.y + c.z) / 3.0f;
-    float3 v = make_float3(c.x - m, c.y - m, c.z - m);
-    float a = 2.0f * MCA_PI * k * dh;
-    float cs = _cosf(a), sn = _sinf(a) * 0.577350269189626f;
-    float3 r = make_float3(v.x * cs + (v.z - v.y) * sn, v.y * cs + (v.x - v.z) * sn, v.z * cs + (v.y - v.x) * sn);
-    float s = 1.0f + k * (g - 1.0f);
-    return make_float3(m + r.x * s, m + r.y * s, m + r.z * s);
-}
 
 __DEVICE__ float3 McaMidtonesNode(float3 c, float k)
 {
@@ -287,16 +239,6 @@ __DEVICE__ float3 McaMidtonesNode(float3 c, float k)
     float3 x2 = McaLinToCct(make_float3(yl + MCA_MT_SAT * (l.x - yl), yl + MCA_MT_SAT * (l.y - yl), yl + MCA_MT_SAT * (l.z - yl)));
     return McaMix(c, x2, k * key);
 }
-
-__DEVICE__ float3 McaShadowsNode(float3 c, float k)
-{
-    float y = McaLuma(c);
-    float sel = McaSmooth(MCA_SH_LOW - MCA_SH_LOW_SOFT, MCA_SH_LOW, y) * (1.0f - McaSmooth(MCA_SH_HIGH, MCA_SH_HIGH + MCA_SH_HIGH_SOFT, y));
-    float key = MCA_SH_GAIN * (1.0f - sel);
-    float b = c.z + k * key * (McaCurve(MCA_SHADOWS, c.z, MCA_SHADOWS_M0, MCA_SHADOWS_M1) - c.z);
-    return make_float3(c.x, c.y, b);
-}
-
 
 // ----------------------------------------------------------------------------
 //  LUT nodes: tetrahedral interpolation from four lattice reads
@@ -375,7 +317,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float3 d;
 
     // 1 Diffusion
-    if (uiDiffusion != 0.0f) c = McaCurveRGB(MCA_DIFFUSION, c, MCA_DIFFUSION_M0, MCA_DIFFUSION_M1, uiDiffusion * 0.01f);
+    if (uiDiffusion != 0.0f) c = McaCurveRGB(MCA_DIFFUSION, c, uiDiffusion * 0.01f);
 
     // 2 Density (DWG/DI)
     d = McaCctToDwg(c);
@@ -383,17 +325,17 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 
     // 3 Compensation (linear)
     float e = _exp2f(uiCompensation);
-    float3 l = make_float3(McaDiDecode(d.x) * e, McaDiDecode(d.y) * e, McaDiDecode(d.z) * e);
-    c = McaLinToCct(McaMul33(MCA_DWG_TO_AP1, l));
+    d = make_float3(McaDiEncode(McaDiDecode(d.x) * e), McaDiEncode(McaDiDecode(d.y) * e), McaDiEncode(McaDiDecode(d.z) * e));
 
-    // 4 Hue Adjustments, 5 Midtones, 6 Contrast, 7 Shadows
-    if (uiHue != 0.0f) c = McaHueNode(c, uiHue * 0.01f);
-    if (uiMidtones != 0.0f) c = McaMidtonesNode(c, uiMidtones * 0.01f);
-    if (uiContrastCurve != 0.0f) c = McaCurveRGB(MCA_CONTRAST, c, MCA_CONTRAST_M0, MCA_CONTRAST_M1, uiContrastCurve * 0.01f);
-    if (uiShadows != 0.0f) c = McaShadowsNode(c, uiShadows * 0.01f);
+    // 4 Hue Adjustments (DWG/DI)
+    if (uiHue != 0.0f) MCA_LUT_NODE(McaHueLut, d, uiHue * 0.01f, d)
 
-    // 8 Sat. Fix (DWG/DI)
-    d = McaCctToDwg(c);
+    // 5 Midtones (ACEScct)
+    if (uiMidtones != 0.0f) d = McaCctToDwg(McaMidtonesNode(McaDwgToCct(d), uiMidtones * 0.01f));
+
+    // 6 Contrast, 7 Shadows, 8 Sat. Fix (DWG/DI)
+    if (uiContrastCurve != 0.0f) MCA_LUT_NODE(McaContrastLut, d, uiContrastCurve * 0.01f, d)
+    if (uiShadows != 0.0f) MCA_LUT_NODE(McaShadowsLut, d, uiShadows * 0.01f, d)
     if (uiSatFix != 0.0f) MCA_LUT_NODE(McaSatFixLut, d, uiSatFix * 0.01f, d)
 
     // extras
