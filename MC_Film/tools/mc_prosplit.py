@@ -15,9 +15,11 @@ worked on as DaVinci Intermediate.
     width tau = 1.5 stops):
         F_j = 1 / (1 + exp(-(x - b_j) / tau))
         w_Lo = 1 - F_1, w_LoMid = F_1 - F_2, ..., w_Hi = F_4
-    so the weights always sum to 1 (the same setting on all five zones is a
-    plain offset), every zone peaks at its own centre, and each reaches well
-    into its neighbours.
+    Every zone peaks at its own centre and reaches well into its neighbours.
+    Towards white the highlight zones work like the reference: Hi-Mid keeps
+    part of its weight (HM_TAIL) up to white and Hi grows by one more unit
+    every HI_EXT stops above its centre (HM_SCALE, HI_SCALE their strength);
+    the shadow side is a plain partition.
     y' = y + SCALE stop x slider / 100 x w x Blend x clean(x) x satmask
 
     The zone width and strength and the Clean Blacks law were fitted to curve
@@ -30,7 +32,10 @@ worked on as DaVinci Intermediate.
     Clean Blacks   fades the toning in from the transfer function's black over
                    H = 10 (slider / 100)^1.7 stops (smoothstep): 100 = clean
                    up to about +5 stops, 50 = about 3 stops above black
-    Clean Whites   the same, down from code value 1.0
+    Clean Whites   fades the toning out from WHITE_END stops above the pivot
+                   (code ~1.4 for DaVinci Intermediate) downwards over
+                   21 (slider / 100)^1.5 stops: 30 leaves normal footage
+                   alone, 69 halves the toning at code 1.0
     Sat Mask       fades it out on saturated colours (tones the neutrals)
 
 A Clean fade or the Neutral Pivot band is never made steeper than the
@@ -48,7 +53,10 @@ SCALE = 1.8                   # offset in stops at zone weight 1 and slider 100
 ZONES = ("Lo", "Lo-Mid", "Mid", "Hi-Mid", "Hi")
 ZONE_CENTRE0, ZONE_STEP = -2.5, 1.25    # nominal centres (boundaries half way between)
 ZONE_TAU = 1.5
-CLEAN_HEIGHT, CLEAN_POWER = 9.97, 1.7   # fade height in stops = H (slider / 100)^P
+HM_TAIL, HM_SCALE = 0.8, 0.6            # highlight zones, fitted to the reference
+HI_SCALE, HI_EXT = 0.3, 3.0
+CLEAN_HEIGHT, CLEAN_POWER = 9.97, 1.7   # Clean Blacks fade height in stops = H (slider / 100)^P
+WHITE_END, WHITE_HEIGHT, WHITE_POWER = 15.0, 21.0, 1.5   # Clean Whites, from the pivot up
 CLEAN_MIN_STOPS = 3.0                   # minimum fade height at a zone slider of 100 (scales with the largest slider)
 NEUTRAL_WIDTH = 6.9                     # Neutral Pivot band half width in stops at 100
 NEUTRAL_GUARD = 1.65                    # band never steeper than 1.65 x the offset near the pivot (in stops)
@@ -156,18 +164,20 @@ def _logistic(t):
 
 def zone_weights(x):
     f = [_logistic((x - (ZONE_CENTRE0 + ZONE_STEP * (j + 0.5))) / ZONE_TAU) for j in range(4)]
-    return np.array([1.0 - f[0], f[0] - f[1], f[1] - f[2], f[2] - f[3], f[3]])
+    c4 = ZONE_CENTRE0 + 4.0 * ZONE_STEP
+    return np.array([1.0 - f[0], f[0] - f[1], f[1] - f[2], HM_SCALE * (f[2] - f[3] + HM_TAIL * f[3]),
+                     HI_SCALE * f[3] * (1.0 + max(x - c4, 0.0) / HI_EXT)])
 
 
 def zone_offset(x, zones):
     return zone_weights(x) @ zones
 
 
-def clean(d, amount, zmax=100.0):
+def clean(d, amount, zmax=100.0, height=CLEAN_HEIGHT, power=CLEAN_POWER):
     """fade-in weight at d stops from the black (or white) end"""
     if amount <= 0.0:
         return 1.0
-    h = CLEAN_HEIGHT * (amount / 100.0) ** CLEAN_POWER
+    h = height * (amount / 100.0) ** power
     hmin = max(CLEAN_MIN_STOPS * zmax / 100.0, 0.05)
     k = min(1.0, h / hmin)
     return 1.0 - k * (1.0 - smooth01(d / max(h, hmin)))
@@ -195,7 +205,7 @@ def tone(y, p, tf="TF_DI"):
     o = zone_offset(x, zones) * (stop / 100.0)
     w = p["blend"] / 100.0
     w *= clean(x - (black - piv) / stop, p["clean_blacks"], zmax)
-    w *= clean((1.0 - piv) / stop - x, p["clean_whites"], zmax)
+    w *= clean(WHITE_END - x, p["clean_whites"], zmax, WHITE_HEIGHT, WHITE_POWER)
     w *= neutral_band(x, p["neutral"], zones, stop)
     if p["sat_mask"] > 0.0:
         m = float(np.linalg.norm(y - y.mean()))

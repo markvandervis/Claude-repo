@@ -16,9 +16,9 @@
 //  Intermediate.  With x the pixel's brightness in stops from the Pivot (one
 //  stop = TF(0.36) - TF(0.18) code values, middle grey = TF(0.18)), the
 //  five zones are broad and overlap: they lie between four soft (logistic,
-//  1.5 stops wide) boundaries at -1.875, -0.625, +0.625 and +1.875 stops, so
-//  the weights always sum to 1 and the same setting on all five zones is a
-//  plain offset:
+//  1.5 stops wide) boundaries at -1.875, -0.625, +0.625 and +1.875 stops;
+//  towards white Hi-Mid keeps part of its weight and Hi keeps growing, as in
+//  the reference:
 //
 //      o(x) = sum w_i(x) Z_i
 //      y'   = y + @@SCALE@@ stop x slider / 100 x Blend x clean x sat mask
@@ -59,7 +59,7 @@ DEFINE_UI_TOOLTIP(uiNeutral, "Keeps a band around the Pivot neutral: the higher,
 DEFINE_UI_PARAMS(uiCleanBlacks, Clean Blacks, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiCleanBlacks, "How far up from black the toning is faded out: 100 keeps it clean up to about 5 stops above middle grey, 50 about 3 stops above black. Black itself is always kept neutral.")
 DEFINE_UI_PARAMS(uiCleanWhites, Clean Whites, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiCleanWhites, "How far down from the top of the range (code value 1.0) the toning is faded out, the same way as Clean Blacks.")
+DEFINE_UI_TOOLTIP(uiCleanWhites, "Fades the toning out towards the top of the range, gently and over a long range: 30 leaves normal footage alone, about 70 halves the toning at white, 100 removes most of it.")
 DEFINE_UI_PARAMS(uiSatMask, Sat Mask, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiSatMask, "Keeps the toning off saturated colours, in percent: at 100 only the neutrals and soft colours are toned.")
 
@@ -90,6 +90,13 @@ DEFINE_UI_TOOLTIP(uiInput, "Log curve of this node's input; it sets where middle
 #define MCP_CLEAN_POWER   @@CLEAN_POWER@@f
 #define MCP_CLEAN_MIN     @@CLEAN_MIN_STOPS@@f
 #define MCP_NEUTRAL_WIDTH @@NEUTRAL_WIDTH@@f
+#define MCP_WHITE_END     @@WHITE_END@@f
+#define MCP_WHITE_HEIGHT  @@WHITE_HEIGHT@@f
+#define MCP_WHITE_POWER   @@WHITE_POWER@@f
+#define MCP_HM_TAIL       @@HM_TAIL@@f
+#define MCP_HM_SCALE      @@HM_SCALE@@f
+#define MCP_HI_SCALE      @@HI_SCALE@@f
+#define MCP_HI_EXT        @@HI_EXT@@f
 #define MCP_NEUTRAL_GUARD @@NEUTRAL_GUARD@@f
 #define MCP_LOG10_2       0.30102999566f
 #define MCP_SAT_CHROMA    @@SAT_CHROMA@@f
@@ -185,7 +192,11 @@ __DEVICE__ float3 McpZoneOffset(float x, float3 z0, float3 z1, float3 z2, float3
     float f1 = McpLogistic((x - (MCP_ZONE_C0 + 1.5f * MCP_ZONE_STEP)) / MCP_ZONE_TAU);
     float f2 = McpLogistic((x - (MCP_ZONE_C0 + 2.5f * MCP_ZONE_STEP)) / MCP_ZONE_TAU);
     float f3 = McpLogistic((x - (MCP_ZONE_C0 + 3.5f * MCP_ZONE_STEP)) / MCP_ZONE_TAU);
-    float w0 = 1.0f - f0, w1 = f0 - f1, w2 = f1 - f2, w3 = f2 - f3, w4 = f3;
+    // highlight side as in the reference: Hi-Mid keeps part of its weight up
+    // to white, Hi keeps growing above its centre
+    float w0 = 1.0f - f0, w1 = f0 - f1, w2 = f1 - f2;
+    float w3 = MCP_HM_SCALE * (f2 - f3 + MCP_HM_TAIL * f3);
+    float w4 = MCP_HI_SCALE * f3 * (1.0f + _fmaxf(x - (MCP_ZONE_C0 + 4.0f * MCP_ZONE_STEP), 0.0f) / MCP_HI_EXT);
     return make_float3(w0 * z0.x + w1 * z1.x + w2 * z2.x + w3 * z3.x + w4 * z4.x,
                        w0 * z0.y + w1 * z1.y + w2 * z2.y + w3 * z3.y + w4 * z4.y,
                        w0 * z0.z + w1 * z1.z + w2 * z2.z + w3 * z3.z + w4 * z4.z);
@@ -195,10 +206,10 @@ __DEVICE__ float3 McpZoneOffset(float x, float3 z0, float3 z1, float3 z2, float3
 // stops from the black (or white) end, d stops away from it.  The fade is
 // never steeper than the strongest zone slider (zmax) allows - below that
 // the strength drops instead - so a grey ramp cannot reverse.
-__DEVICE__ float McpClean(float d, float amount, float zmax)
+__DEVICE__ float McpClean(float d, float amount, float zmax, float height, float power)
 {
     if (amount <= 0.0f) return 1.0f;
-    float h = MCP_CLEAN_HEIGHT * _powf(amount * 0.01f, MCP_CLEAN_POWER);
+    float h = height * _powf(amount * 0.01f, power);
     float hmin = _fmaxf(MCP_CLEAN_MIN * zmax * 0.01f, 0.05f);
     float k = _fminf(1.0f, h / hmin);
     return 1.0f - k * (1.0f - McpSmooth01(d / _fmaxf(h, hmin)));
@@ -246,8 +257,8 @@ __DEVICE__ float3 McpTone(float3 y, float3 z0, float3 z1, float3 z2, float3 z3, 
     float x = (lum - t.x) / t.y;
     float3 o = McpZoneOffset(x, z0, z1, z2, z3, z4);
     float w = g.x * 0.01f;
-    w *= McpClean(x - t.z, g.z, zmax);
-    w *= McpClean((1.0f - t.x) / t.y - x, g.w, zmax);
+    w *= McpClean(x - t.z, g.z, zmax, MCP_CLEAN_HEIGHT, MCP_CLEAN_POWER);
+    w *= McpClean(MCP_WHITE_END - x, g.w, zmax, MCP_WHITE_HEIGHT, MCP_WHITE_POWER);
     w *= McpNeutral(x, g.y, z0, z1, z2, z3, z4);
     w *= McpSatKeep(y, t.y, satMask);
     float k = MCP_SCALE * t.y * 0.01f * w;

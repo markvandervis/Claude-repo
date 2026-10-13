@@ -45,7 +45,7 @@ HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
 HALO_VERSION = "0.6"
 HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % HALO_VERSION)
 SPLIT_TEMPLATE = os.path.join(ROOT, "src", "MC_Pro-Split.dctl.in")
-SPLIT_VERSION = "0.6"
+SPLIT_VERSION = "0.7"
 SPLIT_OUTPUT = os.path.join(ROOT, "MC_Pro-Split-v%s.dctl" % SPLIT_VERSION)
 
 DATA_NOTICE = """\
@@ -295,7 +295,7 @@ def generate_prosplit():
             "C4T": "%.9g" % ps._C4T, "CIN_BLACK": "%.9g" % ps._CIN_BLACK,
             "LUMA_R": repr(ps.LUMA[0]), "LUMA_G": repr(ps.LUMA[1]), "LUMA_B": repr(ps.LUMA[2])}
     for k in ("MIDGRAY", "SCALE", "ZONE_CENTRE0", "ZONE_STEP", "ZONE_TAU", "CLEAN_HEIGHT", "CLEAN_POWER",
-              "CLEAN_MIN_STOPS", "NEUTRAL_WIDTH", "NEUTRAL_GUARD", "SAT_CHROMA"):
+              "CLEAN_MIN_STOPS", "NEUTRAL_WIDTH", "NEUTRAL_GUARD", "WHITE_END", "WHITE_HEIGHT", "WHITE_POWER", "HM_TAIL", "HM_SCALE", "HI_SCALE", "HI_EXT", "SAT_CHROMA"):
         subs[k] = repr(getattr(ps, k))
     lines = []
     for zone, var in zip(("Hi", "Hi-Mid", "Mid", "Lo-Mid", "Lo"), ("Hi", "HiMid", "Mid", "LoMid", "Lo")):

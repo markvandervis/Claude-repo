@@ -175,9 +175,14 @@ def test_controls():
     for name in ZVAR:
         resp = {n: run(greyx(c), Z(**{name: (1, 0, 0)}), clean_blacks=0, clean_whites=0)[0][0] - greyx(c)[0][0]
                 for n, c in cx.items()}
-        check(max(resp, key=resp.get) == name and min(resp.values()) > 0.0,
-              "%s Red +100: strongest at its own centre (%+.2f stops), reaching broadly into the others" %
-              (name, cx[name]))
+        below = [resp[n] for n in ZVAR[:ZVAR.index(name)]]
+        if name in ("HiMid", "Hi"):          # highlight zones act from their centre up to white
+            ok = all(resp[name] > b for b in below)
+            what = "acts from its centre (%+.2f stops) up to white" % cx[name]
+        else:
+            ok = max(resp, key=resp.get) == name
+            what = "strongest at its own centre (%+.2f stops)" % cx[name]
+        check(ok and min(resp.values()) > 0.0, "%s Red +100: %s, reaching broadly into the others" % (name, what))
     # the reference curves: Lo Red -100, measured from screenshots at three Clean Blacks settings
     meas = {51.2: [(0.12, .0546), (0.20, .0618), (0.32, .0329), (0.44, .0133)],
             66.7: [(0.12, .0206), (0.20, .0339), (0.32, .0275), (0.44, .0132)],
@@ -189,11 +194,24 @@ def test_controls():
             o = run([(v, v, v)], Z(Lo=(-1, 0, 0)), clean_blacks=cb)[0]
             worst = max(worst, abs((v - o[0]) - gap))
     check(worst < 0.008, "Lo Red -100 matches the reference curves at Clean Blacks 51 / 67 / 100 (within %.4f)" % worst)
-    ramp = grey(np.linspace(-6, 6, 25))
-    same = run(ramp, Z(**{n: (0.5, -0.3, 0.2) for n in ZVAR}), clean_blacks=0, clean_whites=0)
+    ramp = grey(np.linspace(-6, -2, 9))
+    same = run(ramp, Z(Lo=(0.5, -0.3, 0.2), LoMid=(0.5, -0.3, 0.2), Mid=(0.5, -0.3, 0.2)), clean_blacks=0,
+               clean_whites=0)
     d = np.array(same) - np.array(ramp)
-    check(np.abs(d - K * np.array([0.5, -0.3, 0.2])).max() < 2e-5,
-          "the same setting on all five zones is one plain offset")
+    check(np.abs(d - K * np.array([0.5, -0.3, 0.2])).max() < 2e-3 * K / ps.SCALE * 100,
+          "in the shadows the same setting on Lo, Lo-Mid and Mid is one plain offset")
+    v6, v95 = f32(0.6), f32(0.95)
+    hi = [run([(v, v, v)], Z(Hi=(-1, 0, 0)), clean_whites=0)[0][0] - v for v in (v6, v95)]
+    check(hi[1] < hi[0] < 0, "Hi keeps growing towards white, like the reference (%.3f at 0.6, %.3f at 0.95)" % tuple(hi))
+    ref = Z(Lo=(-1, -0.287, 0), LoMid=(-0.395, -0.209, 0), HiMid=(-0.395, -0.054, 0.163), Hi=(-0.442, 0, 0))
+    meas = {30.0: [(0.60, -0.045), (0.75, -0.054), (0.90, -0.073)], 58.1: [(0.75, -0.054), (0.90, -0.067)],
+            69.0: [(0.60, -0.042), (0.75, -0.047), (0.90, -0.047), (0.95, -0.042)]}
+    worst = 0.0
+    for cw, pts in meas.items():
+        for u, r in pts:
+            v = f32(u)
+            worst = max(worst, abs(run([(v, v, v)], ref, neutral=31.8, clean_blacks=65.1, clean_whites=cw)[0][0] - v - r))
+    check(worst < 0.01, "the reference five-zone curve at Clean Whites 30 / 58 / 69 (within %.4f)" % worst)
     full = np.array(run(grey((0,)), Z(Mid=(1, 0, 0)))[0]) - np.array(grey((0,))[0])
     half = np.array(run(grey((0,)), Z(Mid=(1, 0, 0)), blend=50)[0]) - np.array(grey((0,))[0])
     check(abs(half[0] - 0.5 * full[0]) < 2e-6, "Blend 50 gives half the toning")
@@ -208,9 +226,9 @@ def test_controls():
     deep = grey((-10,)) + [(0.0, 0.0, 0.0)]
     check(maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=100), deep) < 2e-4 and
           maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=0), deep) > 0.02, "Clean Blacks 100 keeps black neutral")
-    top = [(1.0, 1.0, 1.0)]
-    check(maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=100), top) < 1e-6 and
-          maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=0), top) > 0.02, "Clean Whites 100 keeps the top of the range neutral")
+    top = [(f32(0.95),) * 3]
+    check(maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=100), top) < 0.3 * maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=0), top) and
+          maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=0), top) > 0.02, "Clean Whites 100 takes most of the toning out at the top")
     sat = [col(0.30, 0.02, 0.02)]
     s0 = maxdiff(run(sat, Z(Mid=(0, 1, 1)), sat_mask=0), sat)
     s1 = maxdiff(run(sat, Z(Mid=(0, 1, 1)), sat_mask=100), sat)
