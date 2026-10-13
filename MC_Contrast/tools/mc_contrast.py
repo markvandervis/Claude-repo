@@ -44,6 +44,7 @@ import numpy as np
 VERSION = "1.1"
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+LUT_DIR = "MarkCaptures/source"            # relative to the DCTL, as DEFINE_LUT reads it
 LUT_FILES = {"density": "MC_Contrast_Density.cube", "hue": "MC_Contrast_Hue.cube",
              "contrast": "MC_Contrast_Contrast.cube", "shadows": "MC_Contrast_Shadows.cube",
              "satfix": "MC_Contrast_SatFix.cube"}
@@ -184,7 +185,7 @@ _LUTS = {}
 
 def lut(name):
     if name not in _LUTS:
-        _LUTS[name] = load_cube(os.path.join(ROOT, LUT_FILES[name]))
+        _LUTS[name] = load_cube(os.path.join(ROOT, LUT_DIR, LUT_FILES[name]))
     return _LUTS[name]
 
 

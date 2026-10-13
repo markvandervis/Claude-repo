@@ -6,18 +6,23 @@ The **Contrast** group of the MarkCaptures PowerGrade (`can_we_make_this_as_a_dc
 
 ## Install
 
-Copy these six files **into the same folder** in Resolve's LUT folder (for example `.../LUT/MarkCaptures/`), then *Reload DCTL / LUT list*:
+The package is two items. Drag both into Resolve's LUT folder, side by side and as they are, then *Reload DCTL / LUT list*:
 
-| File | |
-|---|---|
-| `MC_Contrast-v1.1.dctl` | the DCTL |
-| `MC_Contrast_Density.cube` | the Density node |
-| `MC_Contrast_Hue.cube` | the Hue Adjustments node |
-| `MC_Contrast_Contrast.cube` | the Contrast node |
-| `MC_Contrast_Shadows.cube` | the Shadows node |
-| `MC_Contrast_SatFix.cube` | the Sat. Fix node |
+```
+LUT/
+├── MC_Contrast-v1.1.dctl
+└── MarkCaptures/
+    └── source/
+        ├── MC_Contrast_Density.cube    Density node
+        ├── MC_Contrast_Hue.cube        Hue Adjustments node
+        ├── MC_Contrast_Contrast.cube   Contrast node
+        ├── MC_Contrast_Shadows.cube    Shadows node
+        └── MC_Contrast_SatFix.cube     Sat. Fix node
+```
 
-The DCTL loads the cubes from its own folder; if one is missing, Resolve won't compile it. Remove v1.0 and its two cubes: v1.1 replaces them.
+The DCTL reads the cubes from `MarkCaptures/source/`, relative to its own location. Keep that folder next to the DCTL (the DCTL may also sit in a subfolder, as long as `MarkCaptures` sits beside it). If a cube is missing, Resolve won't compile the DCTL. The cubes also show up in Resolve's LUT browser under *MarkCaptures › source*. They're inputs for the DCTL, so don't apply them on their own.
+
+The LUT folder is *Project Settings › Color Management › Open LUT Folder*. Typical locations: macOS `/Library/Application Support/Blackmagic Design/DaVinci Resolve/LUT/`, Windows `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\LUT\`.
 
 ## Node tree
 

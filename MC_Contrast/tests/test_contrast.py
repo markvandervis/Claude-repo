@@ -129,8 +129,8 @@ def test_static():
     total = sum(4 * (sizes[c] if c in sizes else int(c)) for c in consts)
     check(total < 60000, "constant tables %d bytes (< 64 KB)" % total)
     luts = re.findall(r"^DEFINE_LUT\(\w+, ([^)]+)\)", src, re.M)
-    check(sorted(luts) == sorted(m.LUT_FILES.values()), "DEFINE_LUT names the shipped cubes")
-    check(all(os.path.exists(os.path.join(ROOT, f)) for f in luts), "cube files are next to the DCTL")
+    check(sorted(luts) == sorted(m.LUT_DIR + "/" + f for f in m.LUT_FILES.values()), "DEFINE_LUT reads the cubes from MarkCaptures/source")
+    check(all(os.path.exists(os.path.join(ROOT, f)) for f in luts), "cube files are in MarkCaptures/source next to the DCTL")
     for f in luts:
         with open(os.path.join(ROOT, f)) as fh:
             head = [fh.readline() for _ in range(6)]
