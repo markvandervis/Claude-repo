@@ -1,8 +1,8 @@
 """
-Generates MC_ACES-Contrast-v<version>.dctl from src/MC_ACES-Contrast.dctl.in
-and the tables in mc_aces_contrast.py.
+Generates MC_Contrast-v<version>.dctl from src/MC_Contrast.dctl.in
+and the tables in mc_contrast.py.
 
-MarkCaptures MC ACES Contrast
+MarkCaptures MC Contrast
 (c) 2026 Mark van der Vis / MarkCaptures - www.markcaptures.com
 All rights reserved; see ../LICENSE.txt.
 
@@ -11,10 +11,10 @@ All rights reserved; see ../LICENSE.txt.
 import os
 import re
 import numpy as np
-import mc_aces_contrast as m
+import mc_contrast as m
 
-TEMPLATE = os.path.join(m.ROOT, "src", "MC_ACES-Contrast.dctl.in")
-OUTPUT = os.path.join(m.ROOT, "MC_ACES-Contrast-v%s.dctl" % m.VERSION)
+TEMPLATE = os.path.join(m.ROOT, "src", "MC_Contrast.dctl.in")
+OUTPUT = os.path.join(m.ROOT, "MC_Contrast-v%s.dctl" % m.VERSION)
 
 
 def flt(v):

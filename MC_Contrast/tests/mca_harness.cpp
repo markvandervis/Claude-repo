@@ -1,5 +1,5 @@
 // ============================================================================
-//  mca_harness.cpp - runs the real MC ACES Contrast DCTL on the CPU.
+//  mca_harness.cpp - runs the real MC Contrast DCTL on the CPU.
 //  Usage: mca_harness [name=value ...] < pixels.txt > result.txt
 //  One pixel per line (three floats, decimal or hex); output three hex floats.
 // ============================================================================

@@ -1,7 +1,7 @@
 """
-MC ACES Contrast - reference model.
+MC Contrast - reference model.
 
-MarkCaptures MC ACES Contrast
+MarkCaptures MC Contrast
 (c) 2026 Mark van der Vis / MarkCaptures - www.markcaptures.com
 All rights reserved; see ../LICENSE.txt.
 
@@ -44,9 +44,9 @@ import numpy as np
 VERSION = "1.1"
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-LUT_FILES = {"density": "MC_ACES_Contrast_Density.cube", "hue": "MC_ACES_Contrast_Hue.cube",
-             "contrast": "MC_ACES_Contrast_Contrast.cube", "shadows": "MC_ACES_Contrast_Shadows.cube",
-             "satfix": "MC_ACES_Contrast_SatFix.cube"}
+LUT_FILES = {"density": "MC_Contrast_Density.cube", "hue": "MC_Contrast_Hue.cube",
+             "contrast": "MC_Contrast_Contrast.cube", "shadows": "MC_Contrast_Shadows.cube",
+             "satfix": "MC_Contrast_SatFix.cube"}
 
 # ---------------------------------------------------------------------------
 #  Colour spaces

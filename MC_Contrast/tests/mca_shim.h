@@ -2,7 +2,7 @@
 //  mca_shim.h
 //  ---------------------------------------------------------------------------
 //  A minimal host-side emulation of the DaVinci Resolve DCTL environment so
-//  that MC ACES Contrast can be compiled *unmodified* by a normal C or C++
+//  that MC Contrast can be compiled *unmodified* by a normal C or C++
 //  compiler and executed on the CPU.  Test harness only - not needed to use
 //  the DCTL in Resolve.
 //

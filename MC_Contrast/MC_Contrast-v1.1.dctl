@@ -1,9 +1,9 @@
-// MarkCaptures MC ACES Contrast
+// MarkCaptures MC Contrast
 // © 2026 Mark van der Vis / MarkCaptures
 // www.markcaptures.com
 
 // ============================================================================
-//  MC_ACES-Contrast-v1.1.dctl  -  MC ACES Contrast
+//  MC_Contrast-v1.1.dctl  -  MC Contrast
 //  ---------------------------------------------------------------------------
 //  The "Contrast" group of the MarkCaptures PowerGrade as one DCTL for
 //  DaVinci Resolve Studio.  The eight nodes run in the PowerGrade's order, in
@@ -27,9 +27,9 @@
 //  Five nodes are Resolve's own LUTs of the original nodes (65 point,
 //  DaVinci Wide Gamut / Intermediate).  Keep the five .cube files in the same
 //  folder as this DCTL:
-//      MC_ACES_Contrast_Density.cube    MC_ACES_Contrast_Hue.cube
-//      MC_ACES_Contrast_Contrast.cube   MC_ACES_Contrast_Shadows.cube
-//      MC_ACES_Contrast_SatFix.cube
+//      MC_Contrast_Density.cube    MC_Contrast_Hue.cube
+//      MC_Contrast_Contrast.cube   MC_Contrast_Shadows.cube
+//      MC_Contrast_SatFix.cube
 //  They are read at lattice points and interpolated tetrahedrally here, so the
 //  result is the same whatever LUT interpolation the project uses.
 //
@@ -42,7 +42,7 @@
 //
 //  POWER GRADE ORDER (DaVinci Wide Gamut)
 //    [camera log] -> [CST to DWG / DaVinci Intermediate] -> [corrections]
-//      -> [MC ACES Contrast  Colour Space: DaVinci Wide Gamut Intermediate]
+//      -> [MC Contrast  Colour Space: DaVinci Wide Gamut Intermediate]
 //      -> [CST DWG / DaVinci Intermediate -> Rec.709]
 //  In an ACES project (ACEScct timeline) set Colour Space to ACEScct.
 //
@@ -63,19 +63,19 @@ DEFINE_UI_TOOLTIP(uiBlend, "Strength of the whole node, in percent: 0 returns th
 DEFINE_UI_PARAMS(uiDiffusion, 1 Diffusion, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
 DEFINE_UI_TOOLTIP(uiDiffusion, "Diffusion curve, in percent (100 = PowerGrade): a gentle darkening that grows towards the highlights (middle grey -0.03, white -0.09 ACEScct).")
 DEFINE_UI_PARAMS(uiDensity, 2 Density, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
-DEFINE_UI_TOOLTIP(uiDensity, "Density node, in percent (100 = PowerGrade): richer saturation with saturated colours made denser (darker), most in blues, purples and greens. Needs MC_ACES_Contrast_Density.cube next to the DCTL.")
+DEFINE_UI_TOOLTIP(uiDensity, "Density node, in percent (100 = PowerGrade): richer saturation with saturated colours made denser (darker), most in blues, purples and greens. Needs MC_Contrast_Density.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiCompensation, 3 Compensation, DCTLUI_SLIDER_FLOAT, -0.30, -2.0, 2.0, 0.01)
 DEFINE_UI_TOOLTIP(uiCompensation, "Exposure after Density, in stops (PowerGrade -0.30).")
 DEFINE_UI_PARAMS(uiHue, 4 Hue Adjustments, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHue, "Hue vs Hue and Hue vs Sat curves, in percent (100 = PowerGrade): mainly on the blues. Needs MC_ACES_Contrast_Hue.cube next to the DCTL.")
+DEFINE_UI_TOOLTIP(uiHue, "Hue vs Hue and Hue vs Sat curves, in percent (100 = PowerGrade): mainly on the blues. Needs MC_Contrast_Hue.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiMidtones, 5 Midtones, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
 DEFINE_UI_TOOLTIP(uiMidtones, "Midtones node, in percent (100 = PowerGrade): contrast 1.1 and saturation 0.9 inside the luminance key at 58 - 61 % (ACEScct).")
 DEFINE_UI_PARAMS(uiContrastCurve, 6 Contrast Curve, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
-DEFINE_UI_TOOLTIP(uiContrastCurve, "Contrast curve, in percent (100 = PowerGrade): a gentle S with a lift just above middle grey. Needs MC_ACES_Contrast_Contrast.cube next to the DCTL.")
+DEFINE_UI_TOOLTIP(uiContrastCurve, "Contrast curve, in percent (100 = PowerGrade): a gentle S with a lift just above middle grey. Needs MC_Contrast_Contrast.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiShadows, 7 Shadows, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
-DEFINE_UI_TOOLTIP(uiShadows, "Shadows node, in percent (100 = PowerGrade): its blue curve inside its luminance key; greys stay neutral. Needs MC_ACES_Contrast_Shadows.cube next to the DCTL.")
+DEFINE_UI_TOOLTIP(uiShadows, "Shadows node, in percent (100 = PowerGrade): its blue curve inside its luminance key; greys stay neutral. Needs MC_Contrast_Shadows.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiSatFix, 8 Sat Fix, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 200.0, 0.1)
-DEFINE_UI_TOOLTIP(uiSatFix, "Sat. Fix node, in percent (100 = PowerGrade): calms reds, oranges and yellow-greens and dark yellows. Needs MC_ACES_Contrast_SatFix.cube next to the DCTL.")
+DEFINE_UI_TOOLTIP(uiSatFix, "Sat. Fix node, in percent (100 = PowerGrade): calms reds, oranges and yellow-greens and dark yellows. Needs MC_Contrast_SatFix.cube next to the DCTL.")
 DEFINE_UI_PARAMS(uiContrast, Contrast, DCTLUI_SLIDER_FLOAT, 1.0, 0.5, 2.0, 0.001)
 DEFINE_UI_TOOLTIP(uiContrast, "Extra contrast after the eight nodes, on ACEScct around Pivot. 1 = off.")
 DEFINE_UI_PARAMS(uiPivot, Pivot, DCTLUI_SLIDER_FLOAT, 0.4135, 0.0, 1.0, 0.001)
@@ -91,15 +91,15 @@ DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
 DEFINE_UI_PARAMS(uiSpace, Colour Space, DCTLUI_COMBO_BOX, 0, {MCA_DWG, MCA_ACESCCT}, {DaVinci Wide Gamut Intermediate, ACEScct})
 DEFINE_UI_TOOLTIP(uiSpace, "Colour space of this node's input and output: DaVinci Wide Gamut / Intermediate in a DWG project, ACEScct in an ACES project.")
 
-DEFINE_LUT(McaDensityLut, MC_ACES_Contrast_Density.cube)
-DEFINE_LUT(McaHueLut, MC_ACES_Contrast_Hue.cube)
-DEFINE_LUT(McaContrastLut, MC_ACES_Contrast_Contrast.cube)
-DEFINE_LUT(McaShadowsLut, MC_ACES_Contrast_Shadows.cube)
-DEFINE_LUT(McaSatFixLut, MC_ACES_Contrast_SatFix.cube)
+DEFINE_LUT(McaDensityLut, MC_Contrast_Density.cube)
+DEFINE_LUT(McaHueLut, MC_Contrast_Hue.cube)
+DEFINE_LUT(McaContrastLut, MC_Contrast_Contrast.cube)
+DEFINE_LUT(McaShadowsLut, MC_Contrast_Shadows.cube)
+DEFINE_LUT(McaSatFixLut, MC_Contrast_SatFix.cube)
 
 
 // ----------------------------------------------------------------------------
-//  Constants and tables (generated from tools/mc_aces_contrast.py)
+//  Constants and tables (generated from tools/mc_contrast.py)
 // ----------------------------------------------------------------------------
 
 #define MCA_LUT_N 65
@@ -493,6 +493,6 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     return McaMix(src, out, uiBlend * 0.01f);
 }
 
-// MarkCaptures MC ACES Contrast
+// MarkCaptures MC Contrast
 // © 2026 Mark van der Vis / MarkCaptures
 // www.markcaptures.com

@@ -1,6 +1,6 @@
-# MC ACES Contrast
+# MC Contrast
 
-**MarkCaptures MC ACES Contrast** · © 2026 Mark van der Vis / MarkCaptures · www.markcaptures.com
+**MarkCaptures MC Contrast** · © 2026 Mark van der Vis / MarkCaptures · www.markcaptures.com
 
 The **Contrast** group of the MarkCaptures PowerGrade (`can_we_make_this_as_a_dctl_1.1.1.drx`), as one DCTL for DaVinci Resolve Studio. The defaults are the PowerGrade's own values. Every node gets a strength slider, plus a few extras on top.
 
@@ -10,12 +10,12 @@ Copy these six files **into the same folder** in Resolve's LUT folder (for examp
 
 | File | |
 |---|---|
-| `MC_ACES-Contrast-v1.1.dctl` | the DCTL |
-| `MC_ACES_Contrast_Density.cube` | the Density node |
-| `MC_ACES_Contrast_Hue.cube` | the Hue Adjustments node |
-| `MC_ACES_Contrast_Contrast.cube` | the Contrast node |
-| `MC_ACES_Contrast_Shadows.cube` | the Shadows node |
-| `MC_ACES_Contrast_SatFix.cube` | the Sat. Fix node |
+| `MC_Contrast-v1.1.dctl` | the DCTL |
+| `MC_Contrast_Density.cube` | the Density node |
+| `MC_Contrast_Hue.cube` | the Hue Adjustments node |
+| `MC_Contrast_Contrast.cube` | the Contrast node |
+| `MC_Contrast_Shadows.cube` | the Shadows node |
+| `MC_Contrast_SatFix.cube` | the Sat. Fix node |
 
 The DCTL loads the cubes from its own folder; if one is missing, Resolve won't compile it. Remove v1.0 and its two cubes: v1.1 replaces them.
 
@@ -23,7 +23,7 @@ The DCTL loads the cubes from its own folder; if one is missing, Resolve won't c
 
 ```
 [camera log] -> [CST to DWG / DaVinci Intermediate] -> [corrections]
-   -> [MC ACES Contrast   Colour Space: DaVinci Wide Gamut Intermediate]
+   -> [MC Contrast   Colour Space: DaVinci Wide Gamut Intermediate]
    -> [CST DWG / DaVinci Intermediate -> Rec.709]
 ```
 
@@ -69,8 +69,8 @@ Between the LUT nodes the image stays in DWG/DI, the space the LUTs were exporte
 ## Build and test
 
 ```
-python3 tools/build_dctl.py               # regenerate the DCTL from src/ and tools/mc_aces_contrast.py
-python3 tests/test_aces_contrast.py       # compiles the DCTL on the host (C++11 and C99, -Werror) and checks it
+python3 tools/build_dctl.py               # regenerate the DCTL from src/ and tools/mc_contrast.py
+python3 tests/test_contrast.py       # compiles the DCTL on the host (C++11 and C99, -Werror) and checks it
 ```
 
-`tools/mc_aces_contrast.py` is the reference model and holds all the node data. The tests run the generated DCTL on the CPU (with `tests/mca_shim.h`) against it. They check that it matches the model at the defaults and at random settings, returns the exported LUTs on their lattice, follows the measured Diffusion curve, gives an exact Compensation, keeps every grey ramp rising, and follows the DCTL style rules.
+`tools/mc_contrast.py` is the reference model and holds all the node data. The tests run the generated DCTL on the CPU (with `tests/mca_shim.h`) against it. They check that it matches the model at the defaults and at random settings, returns the exported LUTs on their lattice, follows the measured Diffusion curve, gives an exact Compensation, keeps every grey ramp rising, and follows the DCTL style rules.

@@ -1,8 +1,8 @@
 """
-Tests for MC ACES Contrast: compiles the generated DCTL on the host (C++11 and
+Tests for MC Contrast: compiles the generated DCTL on the host (C++11 and
 C99, -Werror) and checks it against the Python reference.
 
-    python3 tests/test_aces_contrast.py
+    python3 tests/test_contrast.py
 """
 import os
 import re
@@ -14,10 +14,10 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
-import mc_aces_contrast as m          # noqa: E402
+import mc_contrast as m          # noqa: E402
 
-DCTL = os.path.join(ROOT, "MC_ACES-Contrast-v%s.dctl" % m.VERSION)
-TEMPLATE = os.path.join(ROOT, "src", "MC_ACES-Contrast.dctl.in")
+DCTL = os.path.join(ROOT, "MC_Contrast-v%s.dctl" % m.VERSION)
+TEMPLATE = os.path.join(ROOT, "src", "MC_Contrast.dctl.in")
 BUILD = os.path.join(tempfile.gettempdir(), "mca_build")
 EXE = os.path.join(BUILD, "mca_harness")
 UI = dict(blend="uiBlend", diffusion="uiDiffusion", density="uiDensity", compensation="uiCompensation",
@@ -107,7 +107,7 @@ def sample_pixels(n, seed):
 def test_static():
     print("static")
     src = open(DCTL, encoding="utf-8").read()
-    banner = "// MarkCaptures MC ACES Contrast\n// © 2026 Mark van der Vis / MarkCaptures\n// www.markcaptures.com\n"
+    banner = "// MarkCaptures MC Contrast\n// © 2026 Mark van der Vis / MarkCaptures\n// www.markcaptures.com\n"
     check(src.startswith(banner), "banner at the top")
     check(src.rstrip("\n").endswith(banner.rstrip("\n")), "banner at the bottom")
     check(re.search(r"^__DEVICE__ float3 transform\(int p_Width, int p_Height, int p_X, int p_Y, "
