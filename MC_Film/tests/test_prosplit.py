@@ -28,14 +28,34 @@ import mc_prosplit as ps  # noqa: E402
 
 EXE = os.path.join(t.HERE, "mcp_prosplit")
 ENC = {e: i for i, (e, _) in enumerate(ps.ENCODINGS)}
-UI = dict(amount="uiAmount", hue="uiHue", desat="uiDesat", balance="uiBalance", mid="uiMid", hold="uiHold",
-          knee="uiKnee", black="uiBlack", cast="uiCast", cast_hue="uiCastHue", twist_s="uiTwistS",
-          twist_h="uiTwistH", skin="uiSkin")
+ZVAR = ("Lo", "LoMid", "Mid", "HiMid", "Hi")          # zone index 0 .. 4
+UI = dict(blend="uiBlend", pivot="uiPivot", neutral="uiNeutral", clean_blacks="uiCleanBlacks",
+          clean_whites="uiCleanWhites", sat_mask="uiSatMask")
 
 
-def run(px, **kw):
+def zone_ui(zones):
+    return {"ui%s%s" % (ZVAR[i], ch): float(zones[i][k]) for i in range(5) for k, ch in enumerate("RGB")}
+
+
+def run(px, zones=None, **kw):
     ui = {UI.get(k, k): v for k, v in kw.items()}
+    if zones is not None:
+        ui.update(zone_ui(zones))
     return t.run(px, exe=EXE, **ui)
+
+
+def ref(px, enc="PS_DWG", zones=None, **kw):
+    p = dict(kw)
+    if zones is not None:
+        p["zones"] = np.array(zones, dtype=float)
+    return [ps.pixel(c, enc, **p) for c in px]
+
+
+def Z(**zones):
+    z = np.zeros((5, 3))
+    for name, v in zones.items():
+        z[ZVAR.index(name)] = v
+    return z
 
 
 def grey(stops):
@@ -43,7 +63,6 @@ def grey(stops):
 
 
 def col(*lin):
-    """a DWG / DI pixel from Rec.709 linear values"""
     return tuple(f32(ps.di_encode(v)) for v in ps.REC709_TO_DWG @ np.array(lin))
 
 
@@ -52,13 +71,7 @@ def maxdiff(a, b):
 
 
 def chroma(c):
-    c = np.array(c) - np.mean(c)
-    return float(np.linalg.norm(c))
-
-
-def hue(c):
-    c = np.array(c) - np.mean(c)
-    return math.degrees(math.atan2(float(c @ ps.E2), float(c @ ps.E1)))
+    return float(np.linalg.norm(np.array(c) - np.mean(c)))
 
 
 def test_static():
@@ -74,13 +87,13 @@ def test_static():
     tips = re.findall(r"^DEFINE_UI_TOOLTIP\((\w+),", src, re.M)
     check(sorted(params) == sorted(tips), "every control has one tooltip")
     labels = re.findall(r"^DEFINE_UI_PARAMS\(\w+, ([^,]+), DCTLUI_SLIDER", src, re.M)
-    check(labels == ["Crossover Amount", "Crossover Hue", "Desat Protect", "Crossover Balance", "Middle Grey",
-                     "Midtone Hold", "Crossover Knee", "Black Neutral", "Cast Amount", "Cast Hue", "Shadow Hue Twist",
-                     "Highlight Hue Twist", "Skin Preserve"], "sliders in the planned order")
+    zl = ["%s %s" % (z, c) for z in ("Hi", "Hi-Mid", "Mid", "Lo-Mid", "Lo") for c in ("Red", "Green", "Blue")]
+    check(labels == zl + ["Blend", "Pivot", "Neutral Pivot", "Clean Blacks", "Clean Whites", "Sat Mask"],
+          "sliders: five zones x RGB from Hi to Lo, then Blend, Pivot, Neutral Pivot, Clean Blacks / Whites, Sat Mask")
     code = re.sub(r"//.*", "", src)
     intr = set(re.findall(r"\b(_[a-z][a-z0-9]*)\s*\(", code))
     check("_exp10f" not in code and intr <= {"_fmaxf", "_fminf", "_fabs", "_sqrtf", "_powf", "_exp2f", "_log2f",
-                                             "_cosf", "_sinf", "_expf", "_saturatef", "_atan2f"},
+                                             "_saturatef", "_clampf", "_floor"},
           "only standard intrinsics, no _exp10f (%s)" % sorted(intr))
     check("@@" not in src and not re.search(r"\bdouble\b", code), "no template fields, no double precision")
 
@@ -91,15 +104,19 @@ def test_identity():
     px = [tuple(f32(rng.uniform(-0.1, 1.2)) for _ in range(3)) for _ in range(200)]
     for e, i in ENC.items():
         check(run(px, uiInput=i) == px, "%s: default settings return the input bit exact" % e)
-    check(run(px, amount=1, cast=1, uiBypass=1) == px, "Bypass is bit exact")
-    check(run(px, hue=0.2, desat=1, balance=0.5, mid=0.3, hold=0.5, knee=0.1, black=1, cast_hue=0.6, skin=1) == px,
-          "with Amount, Cast and the Twists at 0 the other sliders change nothing (bit exact)")
+    check(run(px, Z(Mid=(1, -1, 0.5)), uiBypass=1) == px, "Bypass is bit exact")
+    check(run(px, Z(Mid=(1, -1, 0.5)), blend=0) == px, "Blend 0 is bit exact")
+    check(run(px, pivot=1.3, neutral=50, clean_blacks=100, clean_whites=0, sat_mask=80) == px,
+          "with all zones at 0 the other sliders change nothing (bit exact)")
+
+
+def random_zones(rng):
+    return np.array([[rng.choice([0.0, rng.uniform(-1, 1)]) for _ in range(3)] for _ in range(5)])
 
 
 def test_cross():
     section("3. DCTL == reference")
     rng = random.Random(2)
-    worst = {}
     for e, i in ENC.items():
         if e == "PS_DWG":
             px = [tuple(f32(rng.uniform(0.0, 0.9)) for _ in range(3)) for _ in range(60)]
@@ -111,96 +128,88 @@ def test_cross():
             px = [tuple(f32(rng.uniform(0.0, 1.0)) for _ in range(3)) for _ in range(60)]
         w = 0.0
         for _ in range(12):
-            p = dict(amount=rng.uniform(0, 1), hue=rng.uniform(0, 1), desat=rng.uniform(0, 1),
-                     balance=rng.uniform(-1, 1), mid=rng.uniform(-1, 1), hold=rng.uniform(0, 1),
-                     knee=rng.uniform(0, 1), black=rng.uniform(0, 1), cast=rng.choice([0.0, rng.uniform(0, 1)]),
-                     cast_hue=rng.uniform(0, 1), twist_s=rng.choice([0.0, rng.uniform(-1, 1)]),
-                     twist_h=rng.choice([0.0, rng.uniform(-1, 1)]), skin=rng.uniform(0, 1))
-            a = run(px, uiInput=i, **p)
-            b = [ps.pixel(c, e, **p) for c in px]
-            w = max(w, maxdiff(a, b))
-        worst[e] = w
+            zones = random_zones(rng)
+            p = dict(blend=rng.uniform(0, 100), pivot=rng.uniform(-3, 3), neutral=rng.choice([0.0, rng.uniform(0, 100)]),
+                     clean_blacks=rng.uniform(0, 100), clean_whites=rng.uniform(0, 100),
+                     sat_mask=rng.choice([0.0, rng.uniform(0, 100)]))
+            w = max(w, maxdiff(run(px, zones, uiInput=i, **p), ref(px, e, zones, **p)))
         check(w < 1e-4 if e != "PS_LINEAR" else w < 5e-4, "%s: max |DCTL - reference| = %.1e" % (e, w))
 
 
 def test_ramps():
     section("4. grey ramps never reverse")
-    stops = np.linspace(-12, 8, 1001)
-    ramp = grey(stops)
+    ramp = grey(np.linspace(-12, 8, 1001))
+    rng = random.Random(3)
     worst = 0.0
-    for h in np.linspace(0, 1, 13)[:-1]:
-        for p in (dict(amount=1, knee=0, black=1, cast=1), dict(amount=1, knee=0, black=0, balance=1),
-                  dict(amount=1, knee=0, black=1, balance=-1, mid=1, cast=1, cast_hue=0.5),
-                  dict(amount=1, knee=0, hold=1, black=0.5, mid=-1)):
-            o = np.array(run(ramp, **dict(dict(hue=h, cast_hue=(h + 0.3) % 1), **p)))
+    cases = [Z(Lo=(1, 1, 1), LoMid=(-1, -1, -1), Mid=(1, 1, 1), HiMid=(-1, -1, -1), Hi=(1, 1, 1)),
+             Z(Lo=(-1, -1, -1), LoMid=(1, 1, 1), Mid=(-1, -1, -1), HiMid=(1, 1, 1), Hi=(-1, -1, -1))]
+    cases += [np.array([[rng.choice([-1.0, 1.0]) for _ in range(3)] for _ in range(5)]) for _ in range(30)]
+    for zones in cases:
+        for p in (dict(clean_blacks=0, clean_whites=0), dict(clean_blacks=100, clean_whites=100),
+                  dict(pivot=3, clean_blacks=100), dict(pivot=-3, clean_whites=100)):
+            o = np.array(run(ramp, zones, **p))
             worst = max(worst, -np.diff(o, axis=0).min())
-    check(worst < 1e-6, "every channel of a grey ramp rises, at every hue and extreme setting (worst %.1e)" % worst)
+    check(worst < 1e-6, "every channel of a grey ramp rises, for alternating and random extreme zones (worst %.1e)"
+          % worst)
 
 
 def test_controls():
     section("5. controls")
-    g = grey((-3, 0, 3))
-    o = run(g, amount=1, hue=0.55, black=0)
-    sh, md, hi = [np.array(x) - np.array(y) for x, y in zip(o, g)]
-    check(sh[2] > sh[0] + 0.02 and sh[1] > sh[0] + 0.01, "teal hue: shadows go teal %s" % np.round(sh, 3))
-    check(hi[0] > hi[2] + 0.02, "and highlights the opposite, orange %s" % np.round(hi, 3))
-    check(np.abs(md).max() < 0.02, "18 %% grey changes little (%.3f)" % np.abs(md).max())
-    o = run(g, amount=1, balance=1)
-    check(maxdiff(o[:1], g[:1]) < 1e-4 and maxdiff(o[2:], g[2:]) > 0.01, "Balance +1: highlights only")
-    o = run(g, amount=1, balance=-1)
-    check(maxdiff(o[2:], g[2:]) < 1e-4 and maxdiff(o[:1], g[:1]) > 0.01, "Balance -1: shadows only")
-    hold = grey((-1, 1))
-    check(maxdiff(run(hold, amount=1, hold=1), hold) < 1e-6 and maxdiff(run(hold, amount=1), hold) > 0.005,
-          "Midtone Hold 1 keeps +-1 stop untouched")
-    lo = grey((-2.5,))
-    a = run(lo, amount=1, mid=1)[0]
-    b = run(lo, amount=1, mid=-1)[0]
-    check(chroma(a) > chroma(b) * 1.5, "Middle Grey + moves the split up: more of the image counts as shadow")
-    soft = run(grey((-1.5,)), amount=1, knee=1)[0]
-    hard = run(grey((-1.5,)), amount=1, knee=0)[0]
-    check(chroma(hard) > chroma(soft), "Crossover Knee 0 reaches full toning sooner than Knee 1")
-    deep = grey((-10,)) + [(0.0, 0.0, 0.0)]
-    check(maxdiff(run(deep, amount=1, cast=1, black=1), deep) < 2e-4 and
-          maxdiff(run(deep, amount=1, cast=1, black=0), deep) > 0.004, "Black Neutral 1 keeps the blacks neutral "
-          "(without it they are toned)")
-    c = run(grey((0,)), cast=1, cast_hue=0.08)[0]
-    check(c[0] > c[2] + 0.01, "Cast Hue 0.08 warms the midtones %s" % str(np.round(c, 3)))
+    centres = {"Lo": -4, "LoMid": -2, "Mid": 0, "HiMid": 2, "Hi": 4}
 
-    # a strong colour opposite to the shadow hue (teal shadows -> a red-orange shadow colour)
-    red = [col(0.05, 0.012, 0.008)]
-    base = chroma(red[0])
-    p0 = chroma(run(red, amount=1, desat=0, skin=0)[0])
-    p1 = chroma(run(red, amount=1, desat=1, skin=0)[0])
-    check(p0 < base - 0.005 and p1 >= base - 1e-4, "Desat Protect 1 stops the toning washing out an opposite "
-          "colour (chroma %.3f -> %.3f off, %.3f on)" % (base, p0, p1))
-    skin = [col(0.30, 0.17, 0.11), col(0.05, 0.028, 0.018)]
-    s0 = run(skin, amount=1, cast=0.5, twist_s=1, twist_h=1, skin=0)
-    s1 = run(skin, amount=1, cast=0.5, twist_s=1, twist_h=1, skin=1)
-    check(maxdiff(s1, skin) < 0.35 * maxdiff(s0, skin), "Skin Preserve 1 keeps skin tones out (change %.3f vs %.3f)"
-          % (maxdiff(s1, skin), maxdiff(s0, skin)))
-    gg = grey((-3, 3))
-    check(maxdiff(run(gg, twist_s=1, twist_h=-1), gg) < 1e-6, "Hue Twists leave greys alone")
-    green = [col(0.01, 0.04, 0.01)]
-    tw = run(green, twist_s=0.5, skin=0)[0]
-    dh = (hue(tw) - hue(green[0]) + 180) % 360 - 180
-    check(20 < dh < 31, "Shadow Hue Twist 0.5 turns a shadow colour by up to 30 degrees (%.1f)" % dh)
+    def greyx(x):            # a grey x stops from the pivot on the DaVinci Intermediate log scale
+        v = f32(ps.di_encode(ps.MIDGRAY) + x * ps.STOP)
+        return [(v, v, v)]
+    for name, st in centres.items():
+        g = greyx(st)
+        o = run(g, Z(**{name: (1, 0, 0)}), clean_blacks=0, clean_whites=0)[0]
+        others = [run(greyx(s), Z(**{name: (1, 0, 0)}), clean_blacks=0, clean_whites=0)[0][0] - greyx(s)[0][0]
+                  for n, s in centres.items() if abs(s - st) >= 4]
+        check(abs(o[0] - g[0][0] - ps.SCALE) < 2e-5 and o[1] == g[0][1] and all(abs(d) < 1e-6 for d in others),
+              "%s Red +1: red +%.3f log at %+d log stops, nothing two zones away" % (name, o[0] - g[0][0], st))
+    ramp = grey(np.linspace(-6, 6, 25))
+    same = run(ramp, Z(**{n: (0.5, -0.3, 0.2) for n in ZVAR}), clean_blacks=0, clean_whites=0)
+    d = np.array(same) - np.array(ramp)
+    check(np.abs(d - ps.SCALE * np.array([0.5, -0.3, 0.2])).max() < 2e-5,
+          "the same setting on all five zones is one plain offset")
+    half = np.array(run(grey((0,)), Z(Mid=(1, 0, 0)), blend=50)[0]) - np.array(grey((0,))[0])
+    check(abs(half[0] - 0.5 * ps.SCALE) < 2e-5, "Blend 50 gives half the toning")
+    piv = run(grey((1.0,)), Z(Mid=(1, 0, 0)), pivot=1.0)[0][0] - grey((1.0,))[0][0]
+    check(abs(piv - ps.SCALE) < 2e-5, "Pivot +1 moves the Mid zone up one stop")
+    nm = np.array(run(grey((0,)), Z(Mid=(1, 0, -1)), neutral=100)[0]) - np.array(grey((0,))[0])
+    check(np.abs(nm).max() < 1e-6, "Neutral Pivot 100 keeps the pivot grey neutral (Mid tint removed)")
+    nb = np.array(run(grey((0,)), Z(Mid=(1, 1, 1)), neutral=100)[0]) - np.array(grey((0,))[0])
+    check(nb.min() > 0.9 * ps.SCALE, "but Mid can still brighten the pivot")
+    deep = grey((-10,)) + [(0.0, 0.0, 0.0)]
+    check(maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=100), deep) < 2e-4 and
+          maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=0), deep) > 0.02, "Clean Blacks 100 keeps black neutral")
+    top = grey((6,))
+    check(maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=100), top) < 1e-6 and
+          maxdiff(run(top, Z(Hi=(1, -1, 1)), clean_whites=0), top) > 0.02, "Clean Whites 100 keeps the top end neutral")
+    sat = [col(0.30, 0.02, 0.02)]
+    s0 = maxdiff(run(sat, Z(Mid=(0, 1, 1)), sat_mask=0), sat)
+    s1 = maxdiff(run(sat, Z(Mid=(0, 1, 1)), sat_mask=100), sat)
+    gm = grey((0,))
+    check(s1 < 0.05 * s0 and maxdiff(run(gm, Z(Mid=(0, 1, 1)), sat_mask=100), gm) > 0.02,
+          "Sat Mask 100 leaves a saturated colour alone but still tones grey")
 
 
 def test_curves_extremes():
-    section("6. View Curves, extremes")
+    section("6. Show Curves, extremes")
     rng = random.Random(4)
     pts = [(rng.randrange(1920), rng.randrange(1080), 0.4, 0.3, 0.2) for _ in range(3000)]
+    zz = Z(Lo=(0, 0.5, 0.8), Hi=(0.8, 0.3, -0.5))
     off = run(pts)
-    on = run(pts, uiViewCurves=1, amount=0.6)
-    tone = run(pts, amount=0.6)
+    on = run(pts, zz, uiShowCurves=1)
+    tone = run(pts, zz)
     line = [i for i, (a, b) in enumerate(zip(on, tone)) if a != b]
-    check(5 < len(line) < 600, "View Curves draws thin lines over the frame (%d of 3000 random pixels)" % len(line))
+    check(5 < len(line) < 600, "Show Curves draws thin lines over the frame (%d of 3000 random pixels)" % len(line))
     check(all(on[i] == tone[i] for i in range(len(pts)) if i not in line) and off[0] == (f32(0.4), f32(0.3), f32(0.2)),
           "elsewhere the picture is the toned image, unchanged")
     wild = [(0, 0, 0), (1e6, 1e6, 1e6), (-5, -5, -5), (50, -3, 0.2), (0.5, 0.5, -20), (1e-30, 0, 0)]
     ok = True
     for i in ENC.values():
-        o = run(wild, uiInput=i, amount=1, cast=1, twist_s=1, twist_h=-1, desat=1, skin=1)
+        o = run(wild, Z(Lo=(1, -1, 1), Mid=(-1, 1, -1), Hi=(1, 1, -1)), uiInput=i, sat_mask=50, neutral=50)
         ok &= all(math.isfinite(v) for x in o for v in x)
     check(ok, "finite output for extreme inputs in every encoding")
 

@@ -45,7 +45,7 @@ HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
 HALO_VERSION = "0.6"
 HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % HALO_VERSION)
 SPLIT_TEMPLATE = os.path.join(ROOT, "src", "MC_Pro-Split.dctl.in")
-SPLIT_VERSION = "0.1"
+SPLIT_VERSION = "0.2"
 SPLIT_OUTPUT = os.path.join(ROOT, "MC_Pro-Split-v%s.dctl" % SPLIT_VERSION)
 
 DATA_NOTICE = """\
@@ -294,9 +294,21 @@ def generate_prosplit():
             "AP1_TO_DWG": mat(ps.AP1_TO_DWG), "DWG_TO_AP1": mat(ps.DWG_TO_AP1),
             "REC709_TO_DWG": mat(ps.REC709_TO_DWG), "DWG_TO_REC709": mat(ps.DWG_TO_REC709),
             "LUMA_R": repr(ps.LUMA[0]), "LUMA_G": repr(ps.LUMA[1]), "LUMA_B": repr(ps.LUMA[2])}
-    for k in ("XOVER_SCALE", "CAST_SCALE", "MID_RANGE", "HOLD_MAX", "WIDTH_MIN", "WIDTH_RANGE", "BLACK_START",
-              "BLACK_WIDTH", "TWIST_MAX", "DESAT_CHROMA", "SKIN_HUE", "SKIN_WIDTH", "SKIN_CHROMA"):
+    for k in ("SCALE", "ZONE_CENTRE0", "ZONE_STEP", "BLACK_START", "BLACK_WIDTH", "WHITE_START", "WHITE_WIDTH",
+              "SAT_CHROMA"):
         subs[k] = repr(getattr(ps, k))
+    lines = []
+    for zone, var in zip(("Hi", "Hi-Mid", "Mid", "Lo-Mid", "Lo"), ("Hi", "HiMid", "Mid", "LoMid", "Lo")):
+        for ch, name in (("R", "Red"), ("G", "Green"), ("B", "Blue")):
+            v = "ui%s%s" % (var, ch)
+            lines.append("DEFINE_UI_PARAMS(%s, %s %s, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)" % (v, zone, name))
+            lines.append('DEFINE_UI_TOOLTIP(%s, "%s offset in the %s zone (%s): + more %s, - less. 1 is about half a '
+                         'stop.")' % (v, name, zone, {"Hi": "centred 4 stops above the Pivot",
+                                                      "Hi-Mid": "centred 2 stops above the Pivot",
+                                                      "Mid": "centred on the Pivot",
+                                                      "Lo-Mid": "centred 2 stops below the Pivot",
+                                                      "Lo": "centred 4 stops below the Pivot"}[zone], name.lower()))
+    subs["ZONE_UI"] = "\n".join(lines)
     return fill(SPLIT_TEMPLATE, SPLIT_OUTPUT, subs)
 
 

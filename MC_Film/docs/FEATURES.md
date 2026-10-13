@@ -63,7 +63,7 @@ Status: ✅ done · 🟡 partly / approximation · ⏳ planned · 🚫 not possi
 | Hue / HSL | MC HSL Editor | ✅ |
 | Skin tone | MC Skin Guard | ✅ |
 | Balance (skin-driven WB / exposure, false colour in stops) | Planned; reuses the Skin Guard qualifier | ⏳ |
-| Split tone / crossover (crossover hue, balance, knee, cast, hue twists, skin preserve, view curves) | MC Pro Split | ✅ v0.1 |
+| Split tone / crossover | MC Pro Split: RGB offsets in five tonal zones, Blend, Pivot, Neutral Pivot, Clean Blacks / Whites, Sat Mask, Show Curves | ✅ v0.2 |
 | Palette, Tone core, Curves | Planned | ⏳ |
 
 ## Product

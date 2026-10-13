@@ -3,32 +3,32 @@
 // www.markcaptures.com
 
 // ============================================================================
-//  MC_Pro-Split-v@@VERSION@@.dctl  -  MC Pro Split (split tone / crossover)
+//  MC_Pro-Split-v@@VERSION@@.dctl  -  MC Pro Split (RGB split tone, five zones)
 //  ---------------------------------------------------------------------------
-//  A split tone for DaVinci Resolve Studio, part of the MC Film suite: the
-//  shadows move towards one hue, the highlights towards its complement, with
-//  an overall cast on top - the colour crossover of a film print, as a grade.
+//  An RGB split tone for DaVinci Resolve Studio, part of the MC Film suite:
+//  a red, green and blue offset for each of five tonal zones - Hi, Hi-Mid,
+//  Mid, Lo-Mid and Lo.
 //
 //  HOW IT WORKS
 //  Everything happens in DaVinci Wide Gamut, on the DaVinci Intermediate log
 //  value y of each channel, where adding to a channel is an exposure shift of
-//  that channel.  With x the pixel's brightness in stops from Middle Grey:
+//  that channel.  With x the pixel's brightness in stops from the Pivot, the
+//  zones are centred at -4, -2, 0, +2 and +4 stops; between two neighbouring
+//  centres their offsets blend with a smoothstep, and beyond the ends the end
+//  zone holds, so the zone weights always sum to 1 (the same setting on all
+//  five zones is a plain offset):
 //
-//      ws = S((-x - hold) / width)        shadow zone   (S = smoothstep)
-//      wh = S(( x - hold) / width)        highlight zone
-//      o  = @@XOVER_SCALE@@ A (ks ws - kh wh) dir(Crossover Hue)
-//         + @@CAST_SCALE@@ C dir(Cast Hue)
-//      y' = y + o x (black neutral) x (1 - Skin Preserve x skin)
+//      o(x) = (1 - f) Z_i + f Z_i+1
+//      y'   = y + @@SCALE@@ x Blend x o(x) x Clean Blacks / Whites x Sat Mask
 //
-//  dir(h) is a unit vector in the chroma plane (its three components sum to
-//  zero).  Desat Protect removes the part of o that points against a colour's
-//  own chroma, so toning never washes strong colours out; Shadow / Highlight
-//  Hue Twist rotate colours in each zone; Black Neutral fades all toning out
-//  in the deepest shadows; Skin Preserve keeps skin tones untouched.
+//  Neutral Pivot removes the tint of the Mid zone (the pivot grey can only
+//  get lighter or darker); Clean Blacks and Clean Whites fade the toning out
+//  towards black and the brightest highlights; Sat Mask keeps it off
+//  saturated colours.
 //
-//  The zone weights rise at most 1.5 / width per stop and the offsets are
-//  small enough that a grey ramp can never reverse.  With Crossover Amount,
-//  Cast Amount and both Hue Twists at 0 the node returns its input bit exact.
+//  The zone weights change by at most 0.75 per stop and the offsets are
+//  small enough that a grey ramp can never reverse.  With every zone at 0
+//  (or Blend 0) the node returns its input bit exact.
 //
 //  Version : @@VERSION@@
 //  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
@@ -42,37 +42,24 @@
 //  UI
 // ----------------------------------------------------------------------------
 
-DEFINE_UI_PARAMS(uiAmount, Crossover Amount, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiAmount, "Strength of the split tone: shadows towards the Crossover Hue, highlights towards its complement (1 = about half a stop of colour shift).")
-DEFINE_UI_PARAMS(uiHue, Crossover Hue, DCTLUI_SLIDER_FLOAT, 0.55, 0.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiHue, "Hue the shadows move towards, once around the colour wheel: 0 red, 0.17 yellow, 0.33 green, 0.5 cyan, 0.67 blue, 0.83 magenta. The highlights get the opposite hue (0.55 = teal shadows, orange highlights).")
-DEFINE_UI_PARAMS(uiDesat, Desat Protect, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiDesat, "Stops the toning from washing out colours whose hue is opposite to it: 1 removes every shift that would desaturate a colour, 0 tones everything alike.")
-DEFINE_UI_PARAMS(uiBalance, Crossover Balance, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiBalance, "- puts the toning in the shadows only, + in the highlights only, 0 in both.")
-DEFINE_UI_PARAMS(uiMid, Middle Grey, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiMid, "Moves the split point between shadows and highlights: +-1 = 2 stops above or below 18 % grey.")
-DEFINE_UI_PARAMS(uiHold, Midtone Hold, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiHold, "Keeps a band around Middle Grey free of toning (1 = +-1.5 stops).")
-DEFINE_UI_PARAMS(uiKnee, Crossover Knee, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiKnee, "Softness of the change from midtones to shadows and highlights: 0 = within 1.25 stops, 1 = over 4 stops.")
-DEFINE_UI_PARAMS(uiBlack, Black Neutral, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiBlack, "Keeps the blacks neutral: the toning fades out from about 2.5 stops below Middle Grey down to black (1 = fully neutral blacks).")
-DEFINE_UI_PARAMS(uiCast, Cast Amount, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiCast, "An overall colour cast towards the Cast Hue, on top of the split tone.")
-DEFINE_UI_PARAMS(uiCastHue, Cast Hue, DCTLUI_SLIDER_FLOAT, 0.08, 0.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiCastHue, "Hue of the cast, on the same wheel as Crossover Hue (0.08 = warm).")
-DEFINE_UI_PARAMS(uiTwistS, Shadow Hue Twist, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiTwistS, "Rotates the hues of the shadows (+-1 = 60 degrees). Greys do not change.")
-DEFINE_UI_PARAMS(uiTwistH, Highlight Hue Twist, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiTwistH, "Rotates the hues of the highlights (+-1 = 60 degrees). Greys do not change.")
-DEFINE_UI_PARAMS(uiSkin, Skin Preserve, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
-DEFINE_UI_TOOLTIP(uiSkin, "Keeps skin tones out of the toning and the hue twists (1 = skin untouched).")
+@@ZONE_UI@@
+DEFINE_UI_PARAMS(uiBlend, Blend, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiBlend, "Strength of the whole split tone, in percent.")
+DEFINE_UI_PARAMS(uiPivot, Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
+DEFINE_UI_TOOLTIP(uiPivot, "Centre of the Mid zone, in stops from 18 % grey. All five zones move with it.")
+DEFINE_UI_PARAMS(uiNeutral, Neutral Pivot, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiNeutral, "Keeps the pivot grey neutral: removes this percentage of the Mid zone's tint, so Mid can only brighten or darken.")
+DEFINE_UI_PARAMS(uiCleanBlacks, Clean Blacks, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiCleanBlacks, "Fades the toning out towards black, in percent (100 = neutral blacks). The fade starts about 2.5 stops below the Pivot.")
+DEFINE_UI_PARAMS(uiCleanWhites, Clean Whites, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiCleanWhites, "Fades the toning out towards the brightest highlights, in percent (100 = neutral whites from 5 stops above the Pivot).")
+DEFINE_UI_PARAMS(uiSatMask, Sat Mask, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiSatMask, "Keeps the toning off saturated colours, in percent: at 100 only the neutrals and soft colours are toned.")
 
-DEFINE_UI_PARAMS(uiViewCurves, View Curves, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_TOOLTIP(uiViewCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input left to right, output bottom to top, in DaVinci Intermediate), with the diagonal and the Middle Grey line.")
 DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
+DEFINE_UI_PARAMS(uiShowCurves, Show Curves, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiShowCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input left to right, output bottom to top, in DaVinci Intermediate), with the diagonal, the Pivot and the zone centres.")
 
 DEFINE_UI_PARAMS(uiInput, Encoding, DCTLUI_COMBO_BOX, 0, {@@ENC_ENUMS@@}, {@@ENC_NAMES@@})
 DEFINE_UI_TOOLTIP(uiInput, "Encoding of this node's input; the output is in the same encoding. Use DaVinci WG Intermediate in a DWG project, before MC Film Negative or on MC Film Print's DWG output.")
@@ -83,20 +70,14 @@ DEFINE_UI_TOOLTIP(uiInput, "Encoding of this node's input; the output is in the 
 // ----------------------------------------------------------------------------
 
 #define MCP_STOP          0.07329248f
-#define MCP_XOVER_SCALE   @@XOVER_SCALE@@f
-#define MCP_CAST_SCALE    @@CAST_SCALE@@f
-#define MCP_MID_RANGE     @@MID_RANGE@@f
-#define MCP_HOLD_MAX      @@HOLD_MAX@@f
-#define MCP_WIDTH_MIN     @@WIDTH_MIN@@f
-#define MCP_WIDTH_RANGE   @@WIDTH_RANGE@@f
+#define MCP_SCALE         @@SCALE@@f
+#define MCP_ZONE_C0       (@@ZONE_CENTRE0@@f)
+#define MCP_ZONE_STEP     @@ZONE_STEP@@f
 #define MCP_BLACK_START   (@@BLACK_START@@f)
 #define MCP_BLACK_WIDTH   @@BLACK_WIDTH@@f
-#define MCP_TWIST_MAX     @@TWIST_MAX@@f
-#define MCP_DESAT_CHROMA  @@DESAT_CHROMA@@f
-#define MCP_SKIN_HUE      @@SKIN_HUE@@f
-#define MCP_SKIN_WIDTH    @@SKIN_WIDTH@@f
-#define MCP_SKIN_CHROMA   @@SKIN_CHROMA@@f
-#define MCP_PI            3.14159265f
+#define MCP_WHITE_START   @@WHITE_START@@f
+#define MCP_WHITE_WIDTH   @@WHITE_WIDTH@@f
+#define MCP_SAT_CHROMA    @@SAT_CHROMA@@f
 
 
 // ----------------------------------------------------------------------------
@@ -174,89 +155,68 @@ __DEVICE__ float McpSmooth01(float x)
     return t * t * (3.0f - 2.0f * t);
 }
 
-// Unit vector of hue h (0 .. 1 around the wheel, 0 = red) in the chroma
-// plane: e1 = (2, -1, -1) / sqrt 6, e2 = (0, 1, -1) / sqrt 2.
-__DEVICE__ float3 McpDirection(float h)
+__DEVICE__ float3 McpLerp3(float3 a, float3 b, float f)
 {
-    float ca = _cosf(2.0f * MCP_PI * h), sa = _sinf(2.0f * MCP_PI * h);
-    return make_float3(ca * 0.81649658f, -ca * 0.40824829f + sa * 0.70710678f, -ca * 0.40824829f - sa * 0.70710678f);
+    return make_float3(a.x + f * (b.x - a.x), a.y + f * (b.y - a.y), a.z + f * (b.z - a.z));
 }
 
-// a = (amount, hue, desat, balance), b = (mid, hold, knee, black),
-// k = (cast, cast hue, shadow twist, highlight twist), skinAmount
-__DEVICE__ float3 McpTone(float3 y, float4 a, float4 b, float4 k, float skinAmount)
+// Zone offset at x stops from the pivot: z0 = Lo .. z4 = Hi.
+__DEVICE__ float3 McpZoneOffset(float x, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4)
+{
+    float t = _clampf((x - MCP_ZONE_C0) / MCP_ZONE_STEP, 0.0f, 4.0f);
+    int i = (int)_floor(t);
+    if (i > 3) i = 3;
+    float f = McpSmooth01(t - (float)i);
+    if (i == 0) return McpLerp3(z0, z1, f);
+    if (i == 1) return McpLerp3(z1, z2, f);
+    if (i == 2) return McpLerp3(z2, z3, f);
+    return McpLerp3(z3, z4, f);
+}
+
+// g = (blend %, pivot stops, clean blacks %, clean whites %), satMask %;
+// z2 (Mid) already has Neutral Pivot applied.
+__DEVICE__ float3 McpTone(float3 y, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4, float4 g, float satMask)
 {
     float lum = @@LUMA_R@@f * y.x + @@LUMA_G@@f * y.y + @@LUMA_B@@f * y.z;
-    float x = (lum - McpDiEncode(0.184f * _exp2f(MCP_MID_RANGE * b.x))) / MCP_STOP;
-    float hw = b.y * MCP_HOLD_MAX, width = MCP_WIDTH_MIN + MCP_WIDTH_RANGE * b.z;
-    float ws = McpSmooth01((-x - hw) / width), wh = McpSmooth01((x - hw) / width);
-    float ks = _fminf(1.0f, 1.0f - a.w), kh = _fminf(1.0f, 1.0f + a.w);
-
-    float mean = (y.x + y.y + y.z) * (1.0f / 3.0f);
-    float cx = y.x - mean, cy = y.y - mean, cz = y.z - mean;
-    float m = _sqrtf(cx * cx + cy * cy + cz * cz);
-
-    float skin = 0.0f;
-    if (skinAmount > 0.0f && m > 1.0e-9f)
+    float x = (lum - McpDiEncode(0.184f * _exp2f(g.y))) / MCP_STOP;
+    float3 o = McpZoneOffset(x, z0, z1, z2, z3, z4);
+    float w = g.x * 0.01f;
+    w *= 1.0f - g.z * 0.01f * (1.0f - McpSmooth01((x - MCP_BLACK_START) / MCP_BLACK_WIDTH));
+    w *= 1.0f - g.w * 0.01f * McpSmooth01((x - MCP_WHITE_START) / MCP_WHITE_WIDTH);
+    if (satMask > 0.0f)
     {
-        float p1 = cx * 0.81649658f - (cy + cz) * 0.40824829f, p2 = (cy - cz) * 0.70710678f;
-        float hue = _atan2f(p2, p1) * (180.0f / MCP_PI);
-        float dh = hue - MCP_SKIN_HUE;
-        if (dh > 180.0f) dh -= 360.0f;
-        if (dh < -180.0f) dh += 360.0f;
-        float q = dh / MCP_SKIN_WIDTH;
-        skin = McpSmooth01(m / MCP_SKIN_CHROMA) * _expf(-q * q) * McpSmooth01((x + 5.0f) * 0.5f);
+        float mean = (y.x + y.y + y.z) * (1.0f / 3.0f);
+        float cx = y.x - mean, cy = y.y - mean, cz = y.z - mean;
+        w *= 1.0f - satMask * 0.01f * McpSmooth01(_sqrtf(cx * cx + cy * cy + cz * cz) / MCP_SAT_CHROMA);
     }
-    float keep = 1.0f - skinAmount * skin;
-
-    if (k.z != 0.0f || k.w != 0.0f)
-    {
-        float ang = (ws * k.z + wh * k.w) * MCP_TWIST_MAX * keep * (MCP_PI / 180.0f);
-        float ca = _cosf(ang), sa = _sinf(ang) * 0.57735027f;     // rotation about (1, 1, 1)
-        float nx = cx * ca + (cz - cy) * sa;
-        float ny = cy * ca + (cx - cz) * sa;
-        float nz = cz * ca + (cy - cx) * sa;
-        cx = nx; cy = ny; cz = nz;
-    }
-
-    float wb = 1.0f - b.w * (1.0f - McpSmooth01((x - MCP_BLACK_START) / MCP_BLACK_WIDTH));
-    float3 dx = McpDirection(a.y), dc = McpDirection(k.y);
-    float sx = MCP_XOVER_SCALE * a.x * (ks * ws - kh * wh), sc = MCP_CAST_SCALE * k.x;
-    float g = wb * keep;
-    float ox = (sx * dx.x + sc * dc.x) * g, oy = (sx * dx.y + sc * dc.y) * g, oz = (sx * dx.z + sc * dc.z) * g;
-
-    if (a.z > 0.0f && m > 1.0e-9f)
-    {
-        float n = _sqrtf(cx * cx + cy * cy + cz * cz);
-        float ux = cx / n, uy = cy / n, uz = cz / n;
-        float proj = ox * ux + oy * uy + oz * uz;
-        if (proj < 0.0f)
-        {
-            float r = a.z * McpSmooth01(m / MCP_DESAT_CHROMA) * proj;
-            ox -= r * ux; oy -= r * uy; oz -= r * uz;
-        }
-    }
-    return make_float3(mean + cx + ox, mean + cy + oy, mean + cz + oz);
+    float k = MCP_SCALE * w;
+    return make_float3(y.x + k * o.x, y.y + k * o.y, y.z + k * o.z);
 }
 
-// View Curves: the red, green and blue curves of a grey ramp across the whole
+// Show Curves: the red, green and blue curves of a grey ramp across the whole
 // frame (input DI code 0 .. 1 left to right, output 0 .. 1 bottom to top),
-// the diagonal and the Middle Grey line.  Returns (colour, 1) on a line.
-__DEVICE__ float4 McpCurves(int px, int py, int w, int h, float4 a, float4 b, float4 k, float skinAmount)
+// the diagonal, the Pivot and the zone centres.  Returns (colour, 1) on a line.
+__DEVICE__ float4 McpCurves(int px, int py, int w, int h, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4,
+                            float4 g, float satMask)
 {
-    float fw = (float)w, fh = (float)h;
+    float fw = (float)w, fh = (float)h, asp = fw / fh;
     float u0 = ((float)px + 0.5f) / fw, du = 1.0f / fw;
     float v = 1.0f - ((float)py + 0.5f) / fh, dv = 1.0f / fh;
-    float3 c0 = McpTone(make_float3(u0, u0, u0), a, b, k, skinAmount);
-    float3 c1 = McpTone(make_float3(u0 + du, u0 + du, u0 + du), a, b, k, skinAmount);
-    float kr = (c1.x - c0.x) / du * (fw / fh), kg = (c1.y - c0.y) / du * (fw / fh), kb = (c1.z - c0.z) / du * (fw / fh);
+    float3 c0 = McpTone(make_float3(u0, u0, u0), z0, z1, z2, z3, z4, g, satMask);
+    float3 c1 = McpTone(make_float3(u0 + du, u0 + du, u0 + du), z0, z1, z2, z3, z4, g, satMask);
+    float kr = (c1.x - c0.x) / du * asp, kg = (c1.y - c0.y) / du * asp, kb = (c1.z - c0.z) / du * asp;
     if (_fabs(v - c0.x) / dv < 1.3f * _sqrtf(1.0f + kr * kr)) return make_float4(0.75f, 0.12f, 0.12f, 1.0f);
     if (_fabs(v - c0.y) / dv < 1.3f * _sqrtf(1.0f + kg * kg)) return make_float4(0.15f, 0.70f, 0.15f, 1.0f);
     if (_fabs(v - c0.z) / dv < 1.3f * _sqrtf(1.0f + kb * kb)) return make_float4(0.20f, 0.30f, 0.85f, 1.0f);
-    float d = (fw / fh);
-    if (_fabs(v - u0) / dv < 0.7f * _sqrtf(1.0f + d * d)) return make_float4(0.45f, 0.45f, 0.45f, 1.0f);
-    float pivot = McpDiEncode(0.184f * _exp2f(MCP_MID_RANGE * b.x));
-    if (_fabs(u0 - pivot) < 0.6f * du) return make_float4(0.55f, 0.55f, 0.55f, 1.0f);
+    if (_fabs(v - u0) / dv < 0.7f * _sqrtf(1.0f + asp * asp)) return make_float4(0.45f, 0.45f, 0.45f, 1.0f);
+    float pivot = McpDiEncode(0.184f * _exp2f(g.y));
+    if (_fabs(u0 - pivot) < 0.6f * du) return make_float4(0.60f, 0.60f, 0.60f, 1.0f);
+    for (int i = 0; i < 5; ++i)
+    {
+        if (i == 2) continue;
+        float cz = pivot + (MCP_ZONE_C0 + MCP_ZONE_STEP * (float)i) * MCP_STOP;
+        if (_fabs(u0 - cz) < 0.6f * du && ((py / 6) % 2 == 0)) return make_float4(0.40f, 0.40f, 0.40f, 1.0f);
+    }
     return make_float4(0.0f, 0.0f, 0.0f, 0.0f);
 }
 
@@ -271,16 +231,25 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
 {
     float3 c = make_float3(p_R, p_G, p_B);
     if (uiBypass) return c;
-    float4 a = make_float4(uiAmount, uiHue, uiDesat, uiBalance);
-    float4 b = make_float4(uiMid, uiHold, uiKnee, uiBlack);
-    float4 k = make_float4(uiCast, uiCastHue, uiTwistS, uiTwistH);
-    if (uiViewCurves)
+    float3 z0 = make_float3(uiLoR, uiLoG, uiLoB), z1 = make_float3(uiLoMidR, uiLoMidG, uiLoMidB);
+    float3 z2 = make_float3(uiMidR, uiMidG, uiMidB), z3 = make_float3(uiHiMidR, uiHiMidG, uiHiMidB);
+    float3 z4 = make_float3(uiHiR, uiHiG, uiHiB);
+    if (uiNeutral > 0.0f)
     {
-        float4 ov = McpCurves(p_X, p_Y, p_Width, p_Height, a, b, k, uiSkin);
+        float m = (z2.x + z2.y + z2.z) * (1.0f / 3.0f), n = uiNeutral * 0.01f;
+        z2 = make_float3(z2.x - n * (z2.x - m), z2.y - n * (z2.y - m), z2.z - n * (z2.z - m));
+    }
+    float4 g = make_float4(uiBlend, uiPivot, uiCleanBlacks, uiCleanWhites);
+    if (uiShowCurves)
+    {
+        float4 ov = McpCurves(p_X, p_Y, p_Width, p_Height, z0, z1, z2, z3, z4, g, uiSatMask);
         if (ov.w > 0.0f) return McpFromWork(make_float3(ov.x, ov.y, ov.z), uiInput);
     }
-    if (uiAmount == 0.0f && uiCast == 0.0f && uiTwistS == 0.0f && uiTwistH == 0.0f) return c;
-    return McpFromWork(McpTone(McpToWork(c, uiInput), a, b, k, uiSkin), uiInput);
+    int any = (uiLoR != 0.0f || uiLoG != 0.0f || uiLoB != 0.0f || uiLoMidR != 0.0f || uiLoMidG != 0.0f ||
+               uiLoMidB != 0.0f || uiMidR != 0.0f || uiMidG != 0.0f || uiMidB != 0.0f || uiHiMidR != 0.0f ||
+               uiHiMidG != 0.0f || uiHiMidB != 0.0f || uiHiR != 0.0f || uiHiG != 0.0f || uiHiB != 0.0f);
+    if (!any || uiBlend == 0.0f) return c;
+    return McpFromWork(McpTone(McpToWork(c, uiInput), z0, z1, z2, z3, z4, g, uiSatMask), uiInput);
 }
 
 // MarkCaptures MC Pro Split
