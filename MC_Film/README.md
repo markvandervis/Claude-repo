@@ -119,7 +119,7 @@ Use the same Negative Stock on all Core and Grain nodes, and the same Gauge on G
   - Shadow Grain.
   - Grain Seed. A DCTL has no frame number, so keyframe Seed linearly from 0 on the first frame to the number of frames on the last to make the grain move.
 
-### MC Film Halation (`MC_Film-Halation-v0.3.dctl`), before the negative
+### MC Film Halation (`MC_Film-Halation-v0.4.dctl`), before the negative
 - **Physics:** light scattered back through the film base re-exposes mainly the red layer, giving the red-orange glow.
 - **Redistribution, not addition:** light is moved, not added. An even field is untouched, so the stock's measured response stays calibrated; red light is conserved to within 0.05%.
 - **Gauge:** the halo is sized on the film in micrometres, so it grows on smaller gauges.

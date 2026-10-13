@@ -45,7 +45,7 @@ CINEON_DPC = 2.046
 HALO_UM = 80.0
 MATCH_SIZE = 2.0          # Matched mode: Size 1 = the 35mm preset of docs/PRESETS.md
 MATCH_GROWTH = 0.07       # on-screen size growth (S35 width / gauge width)^0.07
-MATCH_AMOUNT = 0.2        # +20 % amount at 8mm
+MATCH_STRENGTH = 0.6      # glow strength ~ (S35 width / gauge width)^0.6, from reference screenshots
 MATCH_COLOUR = 0.15       # colour 0.15 redder at 8mm
 HALO_TAPS = 256
 HALO_TRUNC = 6.0          # kernel truncated at 6 exponential scales
@@ -191,7 +191,9 @@ def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, thre
     if matched:
         g = math.log2(ref_um / gauge_um) / math.log2(ref_um / small_um)
         scale = HALO_UM * MATCH_SIZE * size / (ref_um / width) * (ref_um / gauge_um) ** MATCH_GROWTH
-        amount = amount * (1.0 + MATCH_AMOUNT * g)
+        strength = (ref_um / gauge_um) ** MATCH_STRENGTH
+        amount = amount * strength
+        bloom = bloom * strength
         colour = max(colour - MATCH_COLOUR * g, 0.0)
     else:
         scale = HALO_UM * size / (gauge_um / width)

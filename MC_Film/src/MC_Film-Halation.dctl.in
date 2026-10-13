@@ -34,7 +34,9 @@
 //  is enlarged more, gets a bigger halo on screen.  Matched (default): the
 //  glow keeps about the same size on screen across gauges, growing a little
 //  and getting slightly stronger and warmer on small gauges - the behaviour
-//  of the commercial film plugins, calibrated in docs/PRESETS.md.
+//  of the commercial film plugins, calibrated in docs/PRESETS.md: the glow
+//  strength (Halation and Bloom) grows with the enlargement to the power 0.6
+//  (35mm 1x, 16mm 1.7x, Super 8 2.4x, 8mm 2.7x).
 //
 //  THE KERNEL
 //  Radially an exponential, with its scale set on the film in micrometres and
@@ -57,7 +59,7 @@
 // ----------------------------------------------------------------------------
 
 DEFINE_UI_PARAMS(uiHalAmount, Halation Amount, DCTLUI_SLIDER_FLOAT, 0.25, 0.0, 1.0, 0.01)
-DEFINE_UI_TOOLTIP(uiHalAmount, "Fraction of the red layer's light scattered back through the base: the red-orange halo. In Matched size mode smaller gauges get a little more automatically.")
+DEFINE_UI_TOOLTIP(uiHalAmount, "Fraction of the red layer's light scattered back through the base: the red-orange halo. In Matched size mode smaller gauges get more automatically.")
 DEFINE_UI_PARAMS(uiHalSize, Halation Size, DCTLUI_SLIDER_FLOAT, 1.0, 0.1, 4.0, 0.01)
 DEFINE_UI_TOOLTIP(uiHalSize, "Halo radius. Matched: 1 is a typical 35mm halo and the size stays about the same on screen for every gauge. Physical: relative to a typical film base, fixed on the film, so smaller gauges get bigger halos.")
 DEFINE_UI_PARAMS(uiHalColour, Halation Colour, DCTLUI_SLIDER_FLOAT, 0.6, 0.0, 1.0, 0.01)
@@ -75,7 +77,7 @@ DEFINE_UI_TOOLTIP(uiInput, "Encoding of this node's input; the output is in the 
 DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, @@GAUGE_DEFAULT@@, {@@GAUGE_ENUMS@@}, {@@GAUGE_NAMES@@})
 DEFINE_UI_TOOLTIP(uiGauge, "Film format. Use the same gauge as on MC Film Grain.")
 DEFINE_UI_PARAMS(uiSizeMode, Size Mode, DCTLUI_COMBO_BOX, 0, {HS_MATCHED, HS_PHYSICAL}, {Matched, Physical})
-DEFINE_UI_TOOLTIP(uiSizeMode, "Matched: the glow keeps about the same size on screen for every gauge and gets a little stronger and warmer on small gauges. Physical: the halo has a fixed size on the film, so it grows with the enlargement of small gauges, as on a real print.")
+DEFINE_UI_TOOLTIP(uiSizeMode, "Matched: the glow keeps about the same size on screen for every gauge and gets stronger on small gauges (16mm 1.7x, Super 8 2.4x, 8mm 2.7x the 35mm glow). Physical: the halo has a fixed size on the film, so it grows with the enlargement of small gauges, as on a real print.")
 DEFINE_UI_PARAMS(uiQuality, Quality, DCTLUI_COMBO_BOX, 2, {HQ_DRAFT, HQ_GOOD, HQ_BEST, HQ_ULTRA}, {Draft 32, Good 64, Best 128, Ultra 256})
 DEFINE_UI_TOOLTIP(uiQuality, "Number of samples of the glow (each averages three pixels). More is smoother and slower: Draft for playback, Ultra for the final render. Very small, very bright lights can still show some speckle - see the clean node-tree setup in the manual.")
 
@@ -89,7 +91,7 @@ DEFINE_UI_TOOLTIP(uiQuality, "Number of samples of the glow (each averages three
 #define MCH_TAPS_MAX        @@HALO_TAPS@@
 #define MCH_MATCH_SIZE      @@MATCH_SIZE@@f   // Matched mode: Size 1 = this x the base halo on 35mm
 #define MCH_MATCH_GROWTH    @@MATCH_GROWTH@@f // on-screen growth exponent towards small gauges
-#define MCH_MATCH_AMOUNT    @@MATCH_AMOUNT@@f // extra amount at the smallest gauge (8mm)
+#define MCH_MATCH_STRENGTH  @@MATCH_STRENGTH@@f // glow strength ~ (S35 width / gauge width)^this
 #define MCH_MATCH_COLOUR    @@MATCH_COLOUR@@f // colour shift towards red at the smallest gauge
 #define MCH_REF_WIDTH_UM    @@REF_WIDTH_UM@@f // Super 35
 #define MCH_SMALL_WIDTH_UM  @@SMALL_WIDTH_UM@@f // 8mm
@@ -197,14 +199,15 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
 
     float thr = (uiHalThreshold > 0.0f) ? MCH_MIDGRAY * _exp2f(uiHalThreshold) : 0.0f;
     float gaugeUm = MCH_GAUGE_WIDTH_UM[uiGauge];
-    float amount = uiHalAmount, colour = uiHalColour, scalePx;
+    float amount = uiHalAmount, colour = uiHalColour, scalePx, strength = 1.0f;
     if (uiSizeMode == HS_MATCHED)
     {
         // g = 0 on Super 35, 1 on 8mm (log of the enlargement), < 0 on 65mm
         float g = _log2f(MCH_REF_WIDTH_UM / gaugeUm) / _log2f(MCH_REF_WIDTH_UM / MCH_SMALL_WIDTH_UM);
         scalePx = MCH_HALO_UM * MCH_MATCH_SIZE * uiHalSize / (MCH_REF_WIDTH_UM / (float)p_Width) *
                   _powf(MCH_REF_WIDTH_UM / gaugeUm, MCH_MATCH_GROWTH);
-        amount *= 1.0f + MCH_MATCH_AMOUNT * g;
+        strength = _powf(MCH_REF_WIDTH_UM / gaugeUm, MCH_MATCH_STRENGTH);
+        amount *= strength;
         colour = _fmaxf(colour - MCH_MATCH_COLOUR * g, 0.0f);
     }
     else scalePx = MCH_HALO_UM * uiHalSize / (gaugeUm / (float)p_Width);
@@ -248,7 +251,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
     float3 blurred = make_float3(sr_ * inv,
                                  bloomOn ? sg * inv : MchThreshold(lin.y, thr),
                                  bloomOn ? sb * inv : MchThreshold(lin.z, thr));
-    float3 hal = MchHalate(lin, blurred, amount, colour, uiBloom, thr);
+    float3 hal = MchHalate(lin, blurred, amount, colour, uiBloom * strength, thr);
     if (hal.x == lin.x && hal.y == lin.y && hal.z == lin.z) return c;   // nothing scattered: bit exact
     return make_float3(hal.x == lin.x ? c.x : MchEncode(hal.x, uiInput),
                        hal.y == lin.y ? c.y : MchEncode(hal.y, uiInput),

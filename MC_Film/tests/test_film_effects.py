@@ -274,6 +274,15 @@ def test_halation():
     expect = fx.GAUGES[S35][2] / fx.GAUGES[G16][2]
     check(abs(r16 / r35 / expect - 1.0) < 0.25,
           "Physical: halo size follows the gauge: 16mm / Super 35 = %.2f (frame widths say %.2f)" % (r16 / r35, expect))
+    # Matched strength: total added red light per gauge relative to Super 35
+    def glow_energy(gauge):
+        o = run("fx_halation", pt, P, P, uiHalAmount=0.3, uiQuality=2, uiGauge=gauge, uiBloom=0, uiSizeMode=0)
+        return float(np.maximum(np.vectorize(fx.di_decode)(o)[..., 0] - base, 0.0)[rr > 2].sum())
+    e35 = glow_energy(S35)
+    ratios = [glow_energy(g) / e35 for g in (G16, S8, G8)]
+    check(1.5 < ratios[0] < 1.9 and 2.1 < ratios[1] < 2.7 and 2.4 < ratios[2] < 3.0,
+          "Matched: glow strength 16mm / Super 8 / 8mm = %.2f / %.2f / %.2f x Super 35 (target 1.7 / 2.4 / 2.7)"
+          % tuple(ratios))
     m35, m8 = mean_radius(S35, 0), mean_radius(G8, 0)
     check(1.0 < m8 / m35 < 1.3, "Matched: the glow keeps its on-screen size, 8mm / Super 35 = %.2f" % (m8 / m35))
 

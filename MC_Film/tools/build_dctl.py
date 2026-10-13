@@ -34,7 +34,7 @@ EFFECTS_VERSION = "0.2"
 GRAIN_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Grain.dctl.in")
 GRAIN_OUTPUT = os.path.join(ROOT, "MC_Film-Grain-v%s.dctl" % EFFECTS_VERSION)
 HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
-HALO_VERSION = "0.3"
+HALO_VERSION = "0.4"
 HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % HALO_VERSION)
 
 DATA_NOTICE = """\
@@ -174,7 +174,7 @@ def generate_effects():
     out.append(fill(HALO_TEMPLATE, HALO_OUTPUT, dict(gauge, **{
         "VERSION": HALO_VERSION, "HALO_UM": repr(fx.HALO_UM), "HALO_TAPS": str(fx.HALO_TAPS),
         "MATCH_SIZE": repr(fx.MATCH_SIZE), "MATCH_GROWTH": repr(fx.MATCH_GROWTH),
-        "MATCH_AMOUNT": repr(fx.MATCH_AMOUNT), "MATCH_COLOUR": repr(fx.MATCH_COLOUR),
+        "MATCH_STRENGTH": repr(fx.MATCH_STRENGTH), "MATCH_COLOUR": repr(fx.MATCH_COLOUR),
         "REF_WIDTH_UM": repr([g[2] for g in fx.GAUGES if g[0] == "GAUGE_S35"][0] * 1000.0),
         "SMALL_WIDTH_UM": repr([g[2] for g in fx.GAUGES if g[0] == "GAUGE_8"][0] * 1000.0),
         "HALO_TABLES": halo_tables})))
