@@ -8,9 +8,9 @@ Stock data: derived from **spektrafilm by Andrea Volpato** (https://github.com/a
 
 ---
 
-## MC Film Core v0.3: negative + print engine
+## MC Film Core v0.4: negative + print engine
 
-`MC_Film-Core-v0.3.dctl`
+`MC_Film-Core-v0.4.dctl`
 
 A physically based simulation: the scene is exposed onto a colour negative, developed, printed with printer lights onto a print stock, then projected and viewed.
 
@@ -31,6 +31,8 @@ Each negative and print pair is timed so that a scene 18% grey prints as a neutr
 | Control | What it does |
 |---|---|
 | Exposure | Camera exposure onto the negative, in stops |
+| Scene Temp / Scene Tint | White balance of the scene *before* the film, in mireds (+ warmer) and towards magenta (+) or green (−). Unlike printer lights, it changes how the film itself is exposed. |
+| Red / Green / Blue Layer Contrast | Development gamma per dye layer: the film crossover. 18% grey stays neutral, while shadows and highlights shift in opposite directions. |
 | Push Pull | Development in stops. Push is fitted to measured push-processed Portra 800 (gamma ×1.20 at +1, ×1.31 at +2). Pull is the inverse. |
 | Negative Contrast | Development gamma around 18% grey. The stock's toe and shoulder are kept. |
 | Print Exposure | Printer light on all channels, in points (about 12 points = 1 stop) |
@@ -45,7 +47,8 @@ Each negative and print pair is timed so that a scene 18% grey prints as a neutr
 | Bypass | Return the input unchanged |
 | Input Encoding | DaVinci WG Intermediate (default), ACES AP1 ACEScct, Scene Linear Rec709, Rec709 Gamma 2.4, or Negative Cineon Log (prints a negative from another MC Film Core node) |
 | Negative Stock / Print Stock | The stocks above |
-| Output | Rec709 Gamma 2.4, sRGB, P3 D65 Gamma 2.6, Rec2020 Gamma 2.4, DaVinci WG Intermediate (the print kept in DWG, see below), or Negative Cineon Log (the developed negative, for film effects, a second MC Film Core node or a print LUT) |
+| White Point | D65 / D60 / D55: the white the projected print is rendered at |
+| Output | Rec709 Gamma 2.4 or 2.2, sRGB, P3 D65 Gamma 2.6, Rec2020 Gamma 2.4, DaVinci WG Intermediate (the print kept in DWG, see below), or Negative Cineon Log (the developed negative, for film effects, a second MC Film Core node or a print LUT) |
 
 **Node placement.** The node's output is the projected print, which is display-referred, like a print LUT. Put it last, after your grade, and set Output to match your monitoring. With DaVinci Wide Gamut colour management, set the timeline output so it doesn't apply a second display transform, or use a CST after the node.
 
@@ -132,6 +135,8 @@ Use the same Negative Stock on all Core and Grain nodes, and the same Gauge on G
 - Both DCTLs match the Python reference (`tools/mcfilm_effects.py`).
 
 ## Roadmap (feature parity with the commercial film suites)
+
+The full feature-by-feature status is in `docs/FEATURES.md`.
 
 **DCTLs: colour, per pixel (next)**
 - ~~Bleach Bypass~~ (done in Core v0.2)

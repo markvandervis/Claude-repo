@@ -26,7 +26,7 @@ sys.path.insert(0, HERE)
 import mcfilm_model as m  # noqa: E402
 import mcfilm_effects as fx  # noqa: E402
 
-VERSION = "0.3"
+VERSION = "0.4"
 TABLES_JSON = os.path.join(ROOT, "data", "mcfilm_tables.json")
 TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Core.dctl.in")
 OUTPUT = os.path.join(ROOT, "MC_Film-Core-v%s.dctl" % VERSION)
@@ -94,7 +94,7 @@ def generate(t):
     tables += c_array("MCF_PRT_DYES", [p["dyes"] for p in prts])
     tables += c_array("MCF_PRT_BASE", [p["base"] for p in prts])
     tables += c_array("MCF_PRT_VIEWCMF", viewcmf)
-    tables += c_array("MCF_PRT_CAT", [p["cat"] for p in prts])
+    tables += c_array("MCF_PRT_CAT", [p["cats"] for p in prts])
     tables += c_array("MCF_BALANCE", t["balance"])
     tables += c_array("MCF_PIVOT", t["pivot"])
     tables += c_array("MCF_PRT_D_MID", t["print_d_mid"])
@@ -111,6 +111,11 @@ def generate(t):
         "NEG_NAMES": ", ".join(n for _, n, _ in m.NEGATIVES),
         "PRT_ENUMS": ", ".join(e for e, _, _ in m.PRINTS),
         "PRT_NAMES": ", ".join(n for _, n, _ in m.PRINTS),
+        "WP_ENUMS": ", ".join(e for e, _, _ in m.WHITES),
+        "WP_NAMES": ", ".join(n for _, n, _ in m.WHITES),
+        "TINT_DUV": repr(m.TINT_DUV_PER_UNIT),
+        "TEMP_REF_K": repr(m.TEMP_REF_K),
+        "MIRED_MIN": repr(m.MIRED_MIN),
         "OUT_ENUMS": ", ".join(e for e, _ in m.OUTPUTS),
         "OUT_NAMES": ", ".join(n for _, n in m.OUTPUTS),
         "CURVE_N": str(m.CURVE_N),

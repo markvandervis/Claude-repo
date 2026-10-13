@@ -54,9 +54,12 @@ def chain(lin, gauge, neg=1, prt=0):
     enc = render_chart.di_encode(dwg).reshape(H, W, 3)
     g = ["uiGauge=%d" % gauge]
     hal = frame_io("fx_halation", enc, g + ["uiHalAmount=0.3"])
-    negc = frame_io("mcf_harness", hal, ["uiNegative=%d" % neg, "uiOutput=5"], frame=False)
+    out_cin = [e for e, _ in m.OUTPUTS].index("OUT_CINEON")
+    in_cin = [e for e, _ in m.INPUTS].index("IN_CINEON")
+    negc = frame_io("mcf_harness", hal, ["uiNegative=%d" % neg, "uiOutput=%d" % out_cin], frame=False)
     grn = frame_io("fx_grain", negc, g + ["uiNegative=%d" % neg, "uiSeed=3"])
-    return frame_io("mcf_harness", grn, ["uiNegative=%d" % neg, "uiPrint=%d" % prt, "uiInput=4"], frame=False)
+    return frame_io("mcf_harness", grn, ["uiNegative=%d" % neg, "uiPrint=%d" % prt, "uiInput=%d" % in_cin],
+                    frame=False)
 
 
 def main():

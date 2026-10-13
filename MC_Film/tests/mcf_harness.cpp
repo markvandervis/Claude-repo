@@ -19,11 +19,13 @@ static FloatParam g_f[] = {
     { "uiPrinterGreen", &uiPrinterGreen }, { "uiPrinterBlue", &uiPrinterBlue },
     { "uiPrintContrast", &uiPrintContrast }, { "uiFilmSat", &uiFilmSat },
     { "uiBleachStrength", &uiBleachStrength }, { "uiSilverContrast", &uiSilverContrast },
+    { "uiSceneTemp", &uiSceneTemp }, { "uiSceneTint", &uiSceneTint }, { "uiLayerRed", &uiLayerRed },
+    { "uiLayerGreen", &uiLayerGreen }, { "uiLayerBlue", &uiLayerBlue },
 };
 static IntParam g_i[] = {
     { "uiGamutCompress", &uiGamutCompress }, { "uiBypass", &uiBypass }, { "uiInput", &uiInput },
     { "uiNegative", &uiNegative }, { "uiPrint", &uiPrint }, { "uiOutput", &uiOutput },
-    { "uiBleach", &uiBleach }, { "uiBleachStage", &uiBleachStage }, { "uiPreserveMid", &uiPreserveMid },
+    { "uiWhite", &uiWhite }, { "uiBleach", &uiBleach }, { "uiBleachStage", &uiBleachStage }, { "uiPreserveMid", &uiPreserveMid },
 };
 
 int main(int argc, char** argv)

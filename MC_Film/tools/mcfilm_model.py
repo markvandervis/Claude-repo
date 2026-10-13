@@ -86,12 +86,21 @@ PRINTS = [
 ]
 OUTPUTS = [
     ("OUT_709",     "Rec709 Gamma 2.4"),
+    ("OUT_709_22",  "Rec709 Gamma 2.2"),
     ("OUT_SRGB",    "sRGB"),
     ("OUT_P3",      "P3 D65 Gamma 2.6"),
     ("OUT_2020",    "Rec2020 Gamma 2.4"),
     ("OUT_DWG",     "DaVinci WG Intermediate"),
     ("OUT_CINEON",  "Negative Cineon Log"),
 ]
+# White the projected print's white is rendered at (display primaries stay
+# D65-based: D60 / D55 look warmer, as a print does next to a D65 monitor).
+WHITES = [
+    ("WP_D65", "D65", (0.3127, 0.3290)),
+    ("WP_D60", "D60", (0.32168, 0.33767)),
+    ("WP_D55", "D55", (0.33242, 0.34743)),
+]
+
 INPUTS = [
     ("IN_DWG",      "DaVinci WG Intermediate"),
     ("IN_ACESCCT",  "ACES AP1 ACEScct"),
@@ -122,6 +131,7 @@ REC709_TO_XYZ = np.array([[0.4123908, 0.3575843, 0.1804808],
                           [0.0193308, 0.1191948, 0.9505322]])
 XYZ_TO = {
     "OUT_709":  np.linalg.inv(REC709_TO_XYZ),
+    "OUT_709_22": np.linalg.inv(REC709_TO_XYZ),
     "OUT_DWG":  np.linalg.inv(REC709_TO_XYZ),
     "OUT_SRGB": np.linalg.inv(REC709_TO_XYZ),
     "OUT_P3":   np.array([[2.4934969, -0.9313836, -0.4027108],
@@ -279,9 +289,8 @@ def print_tables(prof):
     xyz_w = view @ cmfs()
     xyz_w = xyz_w / xyz_w[1]
     colour = _colour()
-    cat = colour.adaptation.matrix_chromatic_adaptation_VonKries(
-        xyz_w, colour.xy_to_XYZ(colour.CCS_ILLUMINANTS["CIE 1931 2 Degree Standard Observer"]["D65"]),
-        transform="CAT02")
+    cats = np.array([colour.adaptation.matrix_chromatic_adaptation_VonKries(
+        xyz_w, colour.xy_to_XYZ(xy), transform="CAT02") for _, _, xy in WHITES])
     return {
         "sens": np.nan_to_num(10.0 ** _to10(d["log_sensitivity"])),
         "curves": _curve_table(le, d["density_curves"], lo, hi),
@@ -289,7 +298,7 @@ def print_tables(prof):
         "dyes": _fill_edges(_to10(d["channel_density"])),
         "base": _fill_edges(_to10(d["base_density"])),
         "view": view,
-        "cat": cat,
+        "cats": cats,
     }
 
 
@@ -358,7 +367,7 @@ def gamut_compress(rgb):
     return np.array(out)
 
 
-def negative_density(rgb_lin, neg, exposure_stops, gamma, film_sat=1.0):
+def negative_density(rgb_lin, neg, exposure_stops, gamma, film_sat=1.0, layer_gamma=(1.0, 1.0, 1.0)):
     """Development gamma acts on log exposure around the 18 % grey exposure of
     each layer, so the stock's own toe and shoulder still bound the result and
     18 % grey keeps its density (the print stays timed).
@@ -372,8 +381,8 @@ def negative_density(rgb_lin, neg, exposure_stops, gamma, film_sat=1.0):
     if film_sat != 1.0:
         mean = e.mean()
         e = mean + film_sat * (e - mean)
-    return np.array([curve_eval(neg["curves"][:, k], neg["loge_mid"][k] + gamma * e[k], NEG_LOGE_MIN, NEG_LOGE_MAX)
-                     for k in range(3)])
+    return np.array([curve_eval(neg["curves"][:, k], neg["loge_mid"][k] + gamma * layer_gamma[k] * e[k],
+                                NEG_LOGE_MIN, NEG_LOGE_MAX) for k in range(3)])
 
 
 def print_log_exposure(dens, neg, prt, lamp):
@@ -520,7 +529,7 @@ def encode_output(rgb, output):
     rgb = np.maximum(rgb, 0.0)
     if output == "OUT_SRGB":
         return np.array([12.92 * v if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055 for v in rgb])
-    g = 2.6 if output == "OUT_P3" else 2.4
+    g = 2.6 if output == "OUT_P3" else (2.2 if output == "OUT_709_22" else 2.4)
     return np.array([max(v, 0.0) ** (1.0 / g) for v in rgb])
 
 
@@ -533,6 +542,69 @@ def prepare(tables):
         white_y = (p["view"] * 10.0 ** -p["base"]) @ cmf[:, 1]
         p["viewcmf"] = p["view"][:, None] * cmf / white_y
     return tables
+
+
+# ---------------------------------------------------------------------------
+#  scene white balance (Scene Temp / Scene Tint)
+# ---------------------------------------------------------------------------
+CAT02 = np.array([[0.7328, 0.4296, -0.1624], [-0.7036, 1.6975, 0.0061], [0.0030, 0.0136, 0.9834]])
+TEMP_REF_K = 6504.0
+TINT_DUV_PER_UNIT = 0.0002          # +100 tint = -0.02 Duv (magenta)
+MIRED_MIN = 40.0
+
+
+def planck_xy(t):
+    """Kim et al. (2002) cubic approximation of the Planckian locus."""
+    t = min(max(t, 1667.0), 25000.0)
+    if t <= 4000.0:
+        x = -0.2661239e9 / t ** 3 - 0.2343589e6 / t ** 2 + 0.8776956e3 / t + 0.179910
+    else:
+        x = -3.0258469e9 / t ** 3 + 2.1070379e6 / t ** 2 + 0.2226347e3 / t + 0.240390
+    if t <= 2222.0:
+        y = -1.1063814 * x ** 3 - 1.34811020 * x ** 2 + 2.18555832 * x - 0.20219683
+    elif t <= 4000.0:
+        y = -0.9549476 * x ** 3 - 1.37418593 * x ** 2 + 2.09137015 * x - 0.16748867
+    else:
+        y = 3.0817580 * x ** 3 - 5.87338670 * x ** 2 + 3.75112997 * x - 0.37001483
+    return x, y
+
+
+def white_xy(temp, tint):
+    """Scene Temp in mireds warmer (+) / cooler (-) than 6504 K; Scene Tint
+    towards magenta (+) / green (-), perpendicular to the locus in CIE 1960 uv."""
+    mired = max(1e6 / TEMP_REF_K + temp, MIRED_MIN)
+    t = 1e6 / mired
+    x, y = planck_xy(t)
+    x2, y2 = planck_xy(t * 1.01)
+
+    def uv(a, b):
+        d = -2.0 * a + 12.0 * b + 3.0
+        return 4.0 * a / d, 6.0 * b / d
+    u, v = uv(x, y)
+    u2, v2 = uv(x2, y2)
+    du, dv = u2 - u, v2 - v
+    n = math.hypot(du, dv)
+    nu, nv = -dv / n, du / n
+    if nv < 0.0:                      # make the normal point to the green side
+        nu, nv = -nu, -nv
+    u -= tint * TINT_DUV_PER_UNIT * nu
+    v -= tint * TINT_DUV_PER_UNIT * nv
+    d = 2.0 * u - 8.0 * v + 4.0
+    return 3.0 * u / d, 2.0 * v / d
+
+
+def scene_white_balance(lin, temp, tint):
+    """Re-light the scene: chromatic adaptation (CAT02, von Kries) from the
+    6504 K Planckian white to the chosen white.  Exactly the identity at 0 / 0."""
+    if temp == 0.0 and tint == 0.0:
+        return lin
+
+    def lms(xy):
+        x, y = xy
+        return CAT02 @ np.array([x / y, 1.0, (1.0 - x - y) / y])
+    gain = lms(white_xy(temp, tint)) / lms(white_xy(0.0, 0.0))
+    m = np.linalg.inv(REC709_TO_XYZ) @ np.linalg.inv(CAT02) @ np.diag(gain) @ CAT02 @ REC709_TO_XYZ
+    return m @ lin
 
 
 # Cineon negative encoding: base at code 95 of 1023, 0.002 density per code.
@@ -555,7 +627,7 @@ def render_pixel(rgb, tables, neg_i=1, prt_i=0, encoding="IN_DWG", output="OUT_7
                  exposure=0.0, push=0.0, printer=(0.0, 0.0, 0.0), print_exposure=0.0,
                  neg_contrast=1.0, print_contrast=1.0, gamut=True, film_sat=1.0,
                  bleach="off", bleach_stage="print", bleach_strength=0.7, silver_contrast=1.0,
-                 preserve_mid=True):
+                 preserve_mid=True, white=0, temp=0.0, tint=0.0, layer_gamma=(1.0, 1.0, 1.0)):
     """Mirror of the DCTL's transform()."""
     if "lampsens" not in tables["prints"][0]:
         prepare(tables)
@@ -572,10 +644,11 @@ def render_pixel(rgb, tables, neg_i=1, prt_i=0, encoding="IN_DWG", output="OUT_7
         dens = (np.asarray(rgb, dtype=float) - CINEON_BLACK) * CINEON_DENSITY_PER_CODE
     else:
         lin = decode_input(rgb, encoding)
+        lin = scene_white_balance(lin, temp, tint)
         if gamut:
             lin = gamut_compress(lin)
         lin = np.maximum(lin, 0.0)
-        dens = negative_density(lin, neg, exposure, neg_contrast * push_gamma(push), film_sat)
+        dens = negative_density(lin, neg, exposure, neg_contrast * push_gamma(push), film_sat, layer_gamma)
     if output == "OUT_CINEON":
         return CINEON_BLACK + dens / CINEON_DENSITY_PER_CODE
 
@@ -597,7 +670,7 @@ def render_pixel(rgb, tables, neg_i=1, prt_i=0, encoding="IN_DWG", output="OUT_7
     pd = print_density(log_h, prt, print_contrast, pivot)
     s_prt = silver_density(pd, k_prt, eb)
     tp = 10.0 ** -(prt["base"] + prt["dyes"] @ pd + s_prt)
-    xyz = prt["cat"] @ (tp @ prt["viewcmf"])
+    xyz = prt["cats"][white] @ (tp @ prt["viewcmf"])
     return encode_output(XYZ_TO[output] @ xyz, output)
 
 
