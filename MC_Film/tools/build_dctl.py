@@ -25,6 +25,7 @@ sys.path.insert(0, HERE)
 
 import mcfilm_model as m  # noqa: E402
 import mcfilm_effects as fx  # noqa: E402
+import mc_prosplit as ps  # noqa: E402
 
 VERSION = "0.6"
 TABLES_JSON = os.path.join(ROOT, "data", "mcfilm_tables.json")
@@ -43,6 +44,9 @@ GRAIN_OUTPUT = os.path.join(ROOT, "MC_Film-Grain-v%s.dctl" % EFFECTS_VERSION)
 HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
 HALO_VERSION = "0.6"
 HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % HALO_VERSION)
+SPLIT_TEMPLATE = os.path.join(ROOT, "src", "MC_Pro-Split.dctl.in")
+SPLIT_VERSION = "0.1"
+SPLIT_OUTPUT = os.path.join(ROOT, "MC_Pro-Split-v%s.dctl" % SPLIT_VERSION)
 
 DATA_NOTICE = """\
 //  STOCK DATA - LICENCE NOTICE
@@ -282,6 +286,20 @@ def generate_effects():
     return out
 
 
+def generate_prosplit():
+    def mat(a):
+        return ", ".join("%.9gf" % v for v in np.asarray(a).ravel())
+    subs = {"VERSION": SPLIT_VERSION,
+            "ENC_ENUMS": ", ".join(e for e, _ in ps.ENCODINGS), "ENC_NAMES": ", ".join(n for _, n in ps.ENCODINGS),
+            "AP1_TO_DWG": mat(ps.AP1_TO_DWG), "DWG_TO_AP1": mat(ps.DWG_TO_AP1),
+            "REC709_TO_DWG": mat(ps.REC709_TO_DWG), "DWG_TO_REC709": mat(ps.DWG_TO_REC709),
+            "LUMA_R": repr(ps.LUMA[0]), "LUMA_G": repr(ps.LUMA[1]), "LUMA_B": repr(ps.LUMA[2])}
+    for k in ("XOVER_SCALE", "CAST_SCALE", "MID_RANGE", "HOLD_MAX", "WIDTH_MIN", "WIDTH_RANGE", "BLACK_START",
+              "BLACK_WIDTH", "TWIST_MAX", "DESAT_CHROMA", "SKIN_HUE", "SKIN_WIDTH", "SKIN_CHROMA"):
+        subs[k] = repr(getattr(ps, k))
+    return fill(SPLIT_TEMPLATE, SPLIT_OUTPUT, subs)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--profiles", help="spektrafilm data/profiles directory")
@@ -291,7 +309,7 @@ def main():
         m.save_tables(t, TABLES_JSON)
         print("wrote", TABLES_JSON)
     t = m.load_tables(TABLES_JSON)
-    for out in [generate(t, r[0]) for r in ROLES] + generate_effects():
+    for out in [generate(t, r[0]) for r in ROLES] + generate_effects() + [generate_prosplit()]:
         print("wrote", out, "(%d KB)" % (os.path.getsize(out) // 1024))
 
 

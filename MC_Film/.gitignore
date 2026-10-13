@@ -6,3 +6,4 @@ tests/fx_halation
 tests/mcf_negative
 tests/mcf_print
 tests/mcf_params_*.h
+tests/mcp_prosplit

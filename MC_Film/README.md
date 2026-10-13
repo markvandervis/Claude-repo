@@ -161,13 +161,39 @@ They sit in the full film chain shown above (Halation before MC Film Negative, G
 - Halation: an even field is untouched, nothing ever darkens, no cyan cores on any gauge, the halo colour, gauge scaling and the threshold.
 - Both DCTLs match the Python reference (`tools/mcfilm_effects.py`).
 
+## MC Pro Split v0.1 (split tone / crossover)
+
+`MC_Pro-Split-v0.1.dctl` is a split tone: the shadows move towards one hue and the highlights towards its complement, with an overall cast on top. This is the colour crossover of a film print, as a grade. It will be part of the OFX plugin.
+
+It works in DaVinci Wide Gamut, as a per-channel log offset (an exposure shift per channel) that changes with brightness. Greys get toned but can never reverse along a ramp. With Crossover Amount, Cast Amount and both Hue Twists at 0, the node returns its input unchanged, bit for bit.
+
+| Control | What it does |
+|---|---|
+| Crossover Amount | Strength of the split tone (1 = about half a stop of colour shift) |
+| Crossover Hue | Hue the shadows move towards (0 red, 0.17 yellow, 0.33 green, 0.5 cyan, 0.67 blue, 0.83 magenta); the highlights get the opposite. 0.55 = teal / orange. |
+| Desat Protect | Stops the toning from washing out colours opposite to it |
+| Crossover Balance | − shadows only, + highlights only |
+| Middle Grey | The split point, ±2 stops around 18% grey |
+| Midtone Hold | A band around Middle Grey left untouched (1 = ±1.5 stops) |
+| Crossover Knee | Softness of the transition (1.25 to 4 stops) |
+| Black Neutral | Fades the toning out towards black |
+| Cast Amount, Cast Hue | An overall cast on top of the split tone |
+| Shadow / Highlight Hue Twist | Rotate the hues in the shadows / highlights (±60°); greys don't change |
+| Skin Preserve | Keeps skin tones out of the toning and the twists |
+| View Curves | Draws the red, green and blue curves of a grey ramp over the whole frame, with the diagonal and the Middle Grey line |
+| Encoding | DWG (default), ACEScct, Scene Linear Rec709, Rec709 Gamma 2.4; output in the same encoding |
+
+**Node placement.** Use it on the scene before MC Film Negative, or on the finished print with MC Film Print set to Output DaVinci WG Intermediate, before the final CST. `docs/prosplit.png` shows a test chart before and after, and with View Curves on.
+
+`python3 tests/test_prosplit.py` checks it (34 checks): identity at defaults, DCTL == reference in every encoding, grey ramps never reverse at any hue or extreme setting, and every control acts in the right direction.
+
 ## Roadmap (feature parity with the commercial film suites)
 
 The full feature-by-feature status is in `docs/FEATURES.md`.
 
 **DCTLs: colour, per pixel (next)**
 - ~~Bleach Bypass~~ (done in Core v0.2)
-- Cast & Crossover (crossover, cast, hue twists, skin preserve)
+- ~~Cast & Crossover~~ (done: MC Pro Split v0.1)
 - ~~Film Sat~~ (done in Core v0.2), Tone Core, Curves
 - Palette (harmoniser)
 - Balance (skin-driven white balance and exposure; reuses the MC Skin Guard qualifier)

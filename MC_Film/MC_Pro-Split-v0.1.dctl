@@ -1,0 +1,288 @@
+// MarkCaptures MC Pro Split
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
+
+// ============================================================================
+//  MC_Pro-Split-v0.1.dctl  -  MC Pro Split (split tone / crossover)
+//  ---------------------------------------------------------------------------
+//  A split tone for DaVinci Resolve Studio, part of the MC Film suite: the
+//  shadows move towards one hue, the highlights towards its complement, with
+//  an overall cast on top - the colour crossover of a film print, as a grade.
+//
+//  HOW IT WORKS
+//  Everything happens in DaVinci Wide Gamut, on the DaVinci Intermediate log
+//  value y of each channel, where adding to a channel is an exposure shift of
+//  that channel.  With x the pixel's brightness in stops from Middle Grey:
+//
+//      ws = S((-x - hold) / width)        shadow zone   (S = smoothstep)
+//      wh = S(( x - hold) / width)        highlight zone
+//      o  = 0.035 A (ks ws - kh wh) dir(Crossover Hue)
+//         + 0.03 C dir(Cast Hue)
+//      y' = y + o x (black neutral) x (1 - Skin Preserve x skin)
+//
+//  dir(h) is a unit vector in the chroma plane (its three components sum to
+//  zero).  Desat Protect removes the part of o that points against a colour's
+//  own chroma, so toning never washes strong colours out; Shadow / Highlight
+//  Hue Twist rotate colours in each zone; Black Neutral fades all toning out
+//  in the deepest shadows; Skin Preserve keeps skin tones untouched.
+//
+//  The zone weights rise at most 1.5 / width per stop and the offsets are
+//  small enough that a grey ramp can never reverse.  With Crossover Amount,
+//  Cast Amount and both Hue Twists at 0 the node returns its input bit exact.
+//
+//  Version : 0.1
+//  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
+//            You may use this file for personal and commercial grading work.
+//            You may not redistribute, share, sell, sublicense or publish it,
+//            in whole or in part.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+//  UI
+// ----------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(uiAmount, Crossover Amount, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiAmount, "Strength of the split tone: shadows towards the Crossover Hue, highlights towards its complement (1 = about half a stop of colour shift).")
+DEFINE_UI_PARAMS(uiHue, Crossover Hue, DCTLUI_SLIDER_FLOAT, 0.55, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiHue, "Hue the shadows move towards, once around the colour wheel: 0 red, 0.17 yellow, 0.33 green, 0.5 cyan, 0.67 blue, 0.83 magenta. The highlights get the opposite hue (0.55 = teal shadows, orange highlights).")
+DEFINE_UI_PARAMS(uiDesat, Desat Protect, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiDesat, "Stops the toning from washing out colours whose hue is opposite to it: 1 removes every shift that would desaturate a colour, 0 tones everything alike.")
+DEFINE_UI_PARAMS(uiBalance, Crossover Balance, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiBalance, "- puts the toning in the shadows only, + in the highlights only, 0 in both.")
+DEFINE_UI_PARAMS(uiMid, Middle Grey, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiMid, "Moves the split point between shadows and highlights: +-1 = 2 stops above or below 18 % grey.")
+DEFINE_UI_PARAMS(uiHold, Midtone Hold, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiHold, "Keeps a band around Middle Grey free of toning (1 = +-1.5 stops).")
+DEFINE_UI_PARAMS(uiKnee, Crossover Knee, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiKnee, "Softness of the change from midtones to shadows and highlights: 0 = within 1.25 stops, 1 = over 4 stops.")
+DEFINE_UI_PARAMS(uiBlack, Black Neutral, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiBlack, "Keeps the blacks neutral: the toning fades out from about 2.5 stops below Middle Grey down to black (1 = fully neutral blacks).")
+DEFINE_UI_PARAMS(uiCast, Cast Amount, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiCast, "An overall colour cast towards the Cast Hue, on top of the split tone.")
+DEFINE_UI_PARAMS(uiCastHue, Cast Hue, DCTLUI_SLIDER_FLOAT, 0.08, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiCastHue, "Hue of the cast, on the same wheel as Crossover Hue (0.08 = warm).")
+DEFINE_UI_PARAMS(uiTwistS, Shadow Hue Twist, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiTwistS, "Rotates the hues of the shadows (+-1 = 60 degrees). Greys do not change.")
+DEFINE_UI_PARAMS(uiTwistH, Highlight Hue Twist, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiTwistH, "Rotates the hues of the highlights (+-1 = 60 degrees). Greys do not change.")
+DEFINE_UI_PARAMS(uiSkin, Skin Preserve, DCTLUI_SLIDER_FLOAT, 0.5, 0.0, 1.0, 0.001)
+DEFINE_UI_TOOLTIP(uiSkin, "Keeps skin tones out of the toning and the hue twists (1 = skin untouched).")
+
+DEFINE_UI_PARAMS(uiViewCurves, View Curves, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiViewCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input left to right, output bottom to top, in DaVinci Intermediate), with the diagonal and the Middle Grey line.")
+DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
+
+DEFINE_UI_PARAMS(uiInput, Encoding, DCTLUI_COMBO_BOX, 0, {PS_DWG, PS_ACESCCT, PS_LINEAR, PS_709}, {DaVinci WG Intermediate, ACES AP1 ACEScct, Scene Linear Rec709, Rec709 Gamma 2.4})
+DEFINE_UI_TOOLTIP(uiInput, "Encoding of this node's input; the output is in the same encoding. Use DaVinci WG Intermediate in a DWG project, before MC Film Negative or on MC Film Print's DWG output.")
+
+
+// ----------------------------------------------------------------------------
+//  CONSTANTS
+// ----------------------------------------------------------------------------
+
+#define MCP_STOP          0.07329248f
+#define MCP_XOVER_SCALE   0.035f
+#define MCP_CAST_SCALE    0.03f
+#define MCP_MID_RANGE     2.0f
+#define MCP_HOLD_MAX      1.5f
+#define MCP_WIDTH_MIN     1.25f
+#define MCP_WIDTH_RANGE   2.75f
+#define MCP_BLACK_START   (-4.6f)
+#define MCP_BLACK_WIDTH   2.5f
+#define MCP_TWIST_MAX     60.0f
+#define MCP_DESAT_CHROMA  0.06f
+#define MCP_SKIN_HUE      25.0f
+#define MCP_SKIN_WIDTH    22.0f
+#define MCP_SKIN_CHROMA   0.04f
+#define MCP_PI            3.14159265f
+
+
+// ----------------------------------------------------------------------------
+//  ENCODINGS  (all work happens in DaVinci Intermediate of DWG)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float3 McpMul33(float m00, float m01, float m02, float m10, float m11, float m12,
+                           float m20, float m21, float m22, float3 v)
+{
+    return make_float3(m00 * v.x + m01 * v.y + m02 * v.z, m10 * v.x + m11 * v.y + m12 * v.z,
+                       m20 * v.x + m21 * v.y + m22 * v.z);
+}
+
+__DEVICE__ float McpDiDecode(float y)
+{
+    if (y > 0.02740668f) return _exp2f(_fminf(y, 5.0f) / MCP_STOP - 7.0f) - 0.0075f;
+    return y / 10.44426855f;
+}
+
+__DEVICE__ float McpDiEncode(float x)
+{
+    if (x > 0.00262409f) return (_log2f(x + 0.0075f) + 7.0f) * MCP_STOP;
+    return x * 10.44426855f;
+}
+
+__DEVICE__ float McpCctDecode(float y)
+{
+    if (y > 0.155251141552511f) return _exp2f(_fminf(y, 4.0f) * 17.52f - 9.72f);
+    return (y - 0.0729055341958355f) / 10.5402377416545f;
+}
+
+__DEVICE__ float McpCctEncode(float x)
+{
+    if (x <= 0.0078125f) return 10.5402377416545f * x + 0.0729055341958355f;
+    return (_log2f(x) + 9.72f) / 17.52f;
+}
+
+__DEVICE__ float3 McpToWork(float3 c, int enc)
+{
+    if (enc == PS_DWG) return c;
+    float3 lin;
+    if (enc == PS_ACESCCT)
+        lin = McpMul33(0.914630084f, 0.00445131399f, 0.0809186011f, 0.0307714752f, 0.784764301f, 0.184464222f, 0.0674014105f, 0.0829089888f, 0.849689593f, make_float3(McpCctDecode(c.x), McpCctDecode(c.y), McpCctDecode(c.z)));
+    else if (enc == PS_LINEAR)
+        lin = McpMul33(0.562737969f, 0.323483295f, 0.113778736f, 0.0777542798f, 0.749781141f, 0.172464579f, 0.0646601771f, 0.191958612f, 0.743381211f, c);
+    else
+        lin = McpMul33(0.562737969f, 0.323483295f, 0.113778736f, 0.0777542798f, 0.749781141f, 0.172464579f, 0.0646601771f, 0.191958612f, 0.743381211f, make_float3(_powf(_fmaxf(c.x, 0.0f), 2.4f), _powf(_fmaxf(c.y, 0.0f), 2.4f),
+                                                       _powf(_fmaxf(c.z, 0.0f), 2.4f)));
+    return make_float3(McpDiEncode(lin.x), McpDiEncode(lin.y), McpDiEncode(lin.z));
+}
+
+__DEVICE__ float3 McpFromWork(float3 y, int enc)
+{
+    if (enc == PS_DWG) return y;
+    float3 lin = make_float3(McpDiDecode(y.x), McpDiDecode(y.y), McpDiDecode(y.z));
+    if (enc == PS_ACESCCT)
+    {
+        float3 a = McpMul33(1.10097755f, 0.00494567716f, -0.105923227f, -0.023173413f, 1.3040763f, -0.280902888f, -0.0850736036f, -0.127638368f, 1.21271198f, lin);
+        return make_float3(McpCctEncode(a.x), McpCctEncode(a.y), McpCctEncode(a.z));
+    }
+    lin = McpMul33(1.89871504f, -0.79180471f, -0.10691033f, -0.16894835f, 1.48839859f, -0.31945024f, -0.12152602f, -0.31546761f, 1.43699363f, lin);
+    if (enc == PS_LINEAR) return lin;
+    return make_float3(_powf(_fmaxf(lin.x, 0.0f), 1.0f / 2.4f), _powf(_fmaxf(lin.y, 0.0f), 1.0f / 2.4f),
+                       _powf(_fmaxf(lin.z, 0.0f), 1.0f / 2.4f));
+}
+
+
+// ----------------------------------------------------------------------------
+//  THE SPLIT TONE  (plain arguments)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float McpSmooth01(float x)
+{
+    float t = _saturatef(x);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Unit vector of hue h (0 .. 1 around the wheel, 0 = red) in the chroma
+// plane: e1 = (2, -1, -1) / sqrt 6, e2 = (0, 1, -1) / sqrt 2.
+__DEVICE__ float3 McpDirection(float h)
+{
+    float ca = _cosf(2.0f * MCP_PI * h), sa = _sinf(2.0f * MCP_PI * h);
+    return make_float3(ca * 0.81649658f, -ca * 0.40824829f + sa * 0.70710678f, -ca * 0.40824829f - sa * 0.70710678f);
+}
+
+// a = (amount, hue, desat, balance), b = (mid, hold, knee, black),
+// k = (cast, cast hue, shadow twist, highlight twist), skinAmount
+__DEVICE__ float3 McpTone(float3 y, float4 a, float4 b, float4 k, float skinAmount)
+{
+    float lum = 0.3f * y.x + 0.6f * y.y + 0.1f * y.z;
+    float x = (lum - McpDiEncode(0.184f * _exp2f(MCP_MID_RANGE * b.x))) / MCP_STOP;
+    float hw = b.y * MCP_HOLD_MAX, width = MCP_WIDTH_MIN + MCP_WIDTH_RANGE * b.z;
+    float ws = McpSmooth01((-x - hw) / width), wh = McpSmooth01((x - hw) / width);
+    float ks = _fminf(1.0f, 1.0f - a.w), kh = _fminf(1.0f, 1.0f + a.w);
+
+    float mean = (y.x + y.y + y.z) * (1.0f / 3.0f);
+    float cx = y.x - mean, cy = y.y - mean, cz = y.z - mean;
+    float m = _sqrtf(cx * cx + cy * cy + cz * cz);
+
+    float skin = 0.0f;
+    if (skinAmount > 0.0f && m > 1.0e-9f)
+    {
+        float p1 = cx * 0.81649658f - (cy + cz) * 0.40824829f, p2 = (cy - cz) * 0.70710678f;
+        float hue = _atan2f(p2, p1) * (180.0f / MCP_PI);
+        float dh = hue - MCP_SKIN_HUE;
+        if (dh > 180.0f) dh -= 360.0f;
+        if (dh < -180.0f) dh += 360.0f;
+        float q = dh / MCP_SKIN_WIDTH;
+        skin = McpSmooth01(m / MCP_SKIN_CHROMA) * _expf(-q * q) * McpSmooth01((x + 5.0f) * 0.5f);
+    }
+    float keep = 1.0f - skinAmount * skin;
+
+    if (k.z != 0.0f || k.w != 0.0f)
+    {
+        float ang = (ws * k.z + wh * k.w) * MCP_TWIST_MAX * keep * (MCP_PI / 180.0f);
+        float ca = _cosf(ang), sa = _sinf(ang) * 0.57735027f;     // rotation about (1, 1, 1)
+        float nx = cx * ca + (cz - cy) * sa;
+        float ny = cy * ca + (cx - cz) * sa;
+        float nz = cz * ca + (cy - cx) * sa;
+        cx = nx; cy = ny; cz = nz;
+    }
+
+    float wb = 1.0f - b.w * (1.0f - McpSmooth01((x - MCP_BLACK_START) / MCP_BLACK_WIDTH));
+    float3 dx = McpDirection(a.y), dc = McpDirection(k.y);
+    float sx = MCP_XOVER_SCALE * a.x * (ks * ws - kh * wh), sc = MCP_CAST_SCALE * k.x;
+    float g = wb * keep;
+    float ox = (sx * dx.x + sc * dc.x) * g, oy = (sx * dx.y + sc * dc.y) * g, oz = (sx * dx.z + sc * dc.z) * g;
+
+    if (a.z > 0.0f && m > 1.0e-9f)
+    {
+        float n = _sqrtf(cx * cx + cy * cy + cz * cz);
+        float ux = cx / n, uy = cy / n, uz = cz / n;
+        float proj = ox * ux + oy * uy + oz * uz;
+        if (proj < 0.0f)
+        {
+            float r = a.z * McpSmooth01(m / MCP_DESAT_CHROMA) * proj;
+            ox -= r * ux; oy -= r * uy; oz -= r * uz;
+        }
+    }
+    return make_float3(mean + cx + ox, mean + cy + oy, mean + cz + oz);
+}
+
+// View Curves: the red, green and blue curves of a grey ramp across the whole
+// frame (input DI code 0 .. 1 left to right, output 0 .. 1 bottom to top),
+// the diagonal and the Middle Grey line.  Returns (colour, 1) on a line.
+__DEVICE__ float4 McpCurves(int px, int py, int w, int h, float4 a, float4 b, float4 k, float skinAmount)
+{
+    float fw = (float)w, fh = (float)h;
+    float u0 = ((float)px + 0.5f) / fw, du = 1.0f / fw;
+    float v = 1.0f - ((float)py + 0.5f) / fh, dv = 1.0f / fh;
+    float3 c0 = McpTone(make_float3(u0, u0, u0), a, b, k, skinAmount);
+    float3 c1 = McpTone(make_float3(u0 + du, u0 + du, u0 + du), a, b, k, skinAmount);
+    float kr = (c1.x - c0.x) / du * (fw / fh), kg = (c1.y - c0.y) / du * (fw / fh), kb = (c1.z - c0.z) / du * (fw / fh);
+    if (_fabs(v - c0.x) / dv < 1.3f * _sqrtf(1.0f + kr * kr)) return make_float4(0.75f, 0.12f, 0.12f, 1.0f);
+    if (_fabs(v - c0.y) / dv < 1.3f * _sqrtf(1.0f + kg * kg)) return make_float4(0.15f, 0.70f, 0.15f, 1.0f);
+    if (_fabs(v - c0.z) / dv < 1.3f * _sqrtf(1.0f + kb * kb)) return make_float4(0.20f, 0.30f, 0.85f, 1.0f);
+    float d = (fw / fh);
+    if (_fabs(v - u0) / dv < 0.7f * _sqrtf(1.0f + d * d)) return make_float4(0.45f, 0.45f, 0.45f, 1.0f);
+    float pivot = McpDiEncode(0.184f * _exp2f(MCP_MID_RANGE * b.x));
+    if (_fabs(u0 - pivot) < 0.6f * du) return make_float4(0.55f, 0.55f, 0.55f, 1.0f);
+    return make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+}
+
+
+// ----------------------------------------------------------------------------
+//  ENTRY POINT
+// ----------------------------------------------------------------------------
+
+// NOTE: Resolve parses this declaration with a line-based matcher.  It must
+// stay on ONE line, in exactly this form, or Resolve reports "wrong argument".
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    float3 c = make_float3(p_R, p_G, p_B);
+    if (uiBypass) return c;
+    float4 a = make_float4(uiAmount, uiHue, uiDesat, uiBalance);
+    float4 b = make_float4(uiMid, uiHold, uiKnee, uiBlack);
+    float4 k = make_float4(uiCast, uiCastHue, uiTwistS, uiTwistH);
+    if (uiViewCurves)
+    {
+        float4 ov = McpCurves(p_X, p_Y, p_Width, p_Height, a, b, k, uiSkin);
+        if (ov.w > 0.0f) return McpFromWork(make_float3(ov.x, ov.y, ov.z), uiInput);
+    }
+    if (uiAmount == 0.0f && uiCast == 0.0f && uiTwistS == 0.0f && uiTwistH == 0.0f) return c;
+    return McpFromWork(McpTone(McpToWork(c, uiInput), a, b, k, uiSkin), uiInput);
+}
+
+// MarkCaptures MC Pro Split
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
