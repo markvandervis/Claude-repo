@@ -45,7 +45,7 @@ HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
 HALO_VERSION = "0.6"
 HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % HALO_VERSION)
 SPLIT_TEMPLATE = os.path.join(ROOT, "src", "MC_Pro-Split.dctl.in")
-SPLIT_VERSION = "0.9"
+SPLIT_VERSION = "1.0"
 SPLIT_OUTPUT = os.path.join(ROOT, "MC_Pro-Split-v%s.dctl" % SPLIT_VERSION)
 
 DATA_NOTICE = """\
@@ -293,9 +293,10 @@ def generate_prosplit():
             "ENC_ENUMS": ", ".join(e for e, _ in ps.ENCODINGS), "ENC_NAMES": ", ".join(n for _, n in ps.ENCODINGS),
             "C4A": "%.9g" % ps._C4A, "C4B": "%.9g" % ps._C4B, "C4C": "%.9g" % ps._C4C, "C4S": "%.9g" % ps._C4S,
             "C4T": "%.9g" % ps._C4T, "CIN_BLACK": "%.9g" % ps._CIN_BLACK,
+            "AP1_TO_REC709": mat(ps.AP1_TO_REC709), "DWG_TO_REC709": mat(ps.DWG_TO_REC709),
             "LUMA_R": repr(ps.LUMA[0]), "LUMA_G": repr(ps.LUMA[1]), "LUMA_B": repr(ps.LUMA[2])}
     for k in ("MIDGRAY", "SCALE", "ZONE_CENTRE0", "ZONE_STEP", "ZONE_TAU", "CLEAN_HEIGHT", "CLEAN_POWER",
-              "CLEAN_MIN_STOPS", "NEUTRAL_WIDTH", "NEUTRAL_GUARD", "WHITE_END", "WHITE_HEIGHT", "WHITE_POWER", "HM_TAIL", "HM_SCALE", "HI_SCALE", "HI_EXT", "SAT_CHROMA"):
+              "CLEAN_MIN_STOPS", "NEUTRAL_WIDTH", "NEUTRAL_GUARD", "WHITE_END", "WHITE_HEIGHT", "WHITE_POWER", "HM_TAIL", "HM_SCALE", "HI_SCALE", "HI_EXT", "SAT_CHROMA", "SKIN_HUE", "SKIN_HALF_WIDTH", "SKIN_HUE_FEATHER", "SKIN_SAT_LO", "SKIN_SAT_HI", "SKIN_SAT_FEATHER", "SKIN_DARK_CHROMA", "SKIN_NEUTRAL_START", "SKIN_NEUTRAL_WIDTH"):
         subs[k] = repr(getattr(ps, k))
     lines = []
     for zone, var in zip(("Hi", "Hi-Mid", "Mid", "Lo-Mid", "Lo"), ("Hi", "HiMid", "Mid", "LoMid", "Lo")):

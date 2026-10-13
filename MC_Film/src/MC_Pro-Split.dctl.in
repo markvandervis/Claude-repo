@@ -61,6 +61,8 @@ DEFINE_UI_TOOLTIP(uiCleanBlacks, "How far up from black the toning is faded out:
 DEFINE_UI_PARAMS(uiCleanWhites, Clean Whites, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiCleanWhites, "Fades the toning out towards the top of the range, gently and over a long range: 30 leaves normal footage alone, about 70 halves the toning at white, 100 removes most of it.")
 DEFINE_UI_PARAMS(uiSatMask, Sat Mask, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
+DEFINE_UI_PARAMS(uiSkin, Skin Protect, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiSkin, "Keeps skin tones out of the toning, in percent, with the MC Skin Guard skin qualifier (hue 27 degrees +-15, saturation 10 - 75 %). Greys and other colours are toned as usual. Check it with Highlight Skin.")
 DEFINE_UI_TOOLTIP(uiSatMask, "Keeps the toning off saturated colours, in percent: at 100 only the neutrals and soft colours are toned.")
 
 DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
@@ -69,6 +71,8 @@ DEFINE_UI_PARAMS(uiShowCurves, Show Curves, DCTLUI_CHECK_BOX, 1)
 DEFINE_UI_TOOLTIP(uiShowCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input code value left to right, output bottom to top) and the middle grey (Pivot) line. The curves are see-through and add up: unchanged they form one white line, green + blue = cyan.")
 DEFINE_UI_PARAMS(uiShowSatMask, Highlight Sat Mask, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiShowSatMask, "Shows the picture in grey with the colours that Sat Mask keeps out of the toning painted magenta.")
+DEFINE_UI_PARAMS(uiShowSkin, Highlight Skin, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiShowSkin, "Shows the picture in grey with the skin that Skin Protect keeps out of the toning painted orange.")
 DEFINE_UI_PARAMS(uiShowRamp, Show Ramp, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiShowRamp, "Adds a grey ramp along the bottom of the frame, toned by the module, to see each zone's colour.")
 
@@ -97,6 +101,15 @@ DEFINE_UI_TOOLTIP(uiInput, "Log curve of this node's input; it sets where middle
 #define MCP_HM_SCALE      @@HM_SCALE@@f
 #define MCP_HI_SCALE      @@HI_SCALE@@f
 #define MCP_HI_EXT        @@HI_EXT@@f
+#define MCP_SKIN_HUE      @@SKIN_HUE@@f
+#define MCP_SKIN_HALF     @@SKIN_HALF_WIDTH@@f
+#define MCP_SKIN_HFEATHER @@SKIN_HUE_FEATHER@@f
+#define MCP_SKIN_SAT_LO   @@SKIN_SAT_LO@@f
+#define MCP_SKIN_SAT_HI   @@SKIN_SAT_HI@@f
+#define MCP_SKIN_SFEATHER @@SKIN_SAT_FEATHER@@f
+#define MCP_SKIN_DARK     @@SKIN_DARK_CHROMA@@f
+#define MCP_SKIN_NSTART   @@SKIN_NEUTRAL_START@@f
+#define MCP_SKIN_NWIDTH   @@SKIN_NEUTRAL_WIDTH@@f
 #define MCP_NEUTRAL_GUARD @@NEUTRAL_GUARD@@f
 #define MCP_LOG10_2       0.30102999566f
 #define MCP_SAT_CHROMA    @@SAT_CHROMA@@f
@@ -118,6 +131,19 @@ __DEVICE__ float McpDiEncode(float x)
 {
     if (x > 0.00262409f) return (_log2f(x + 0.0075f) + 7.0f) * MCP_STOP;
     return x * 10.44426855f;
+}
+
+__DEVICE__ float McpCctDecode(float y)
+{
+    if (y > 0.155251141552511f) return _exp2f(_fminf(y, 4.0f) * 17.52f - 9.72f);
+    return (y - 0.0729055341958355f) / 10.5402377416545f;
+}
+
+__DEVICE__ float3 McpMul33(float m00, float m01, float m02, float m10, float m11, float m12,
+                           float m20, float m21, float m22, float3 v)
+{
+    return make_float3(m00 * v.x + m01 * v.y + m02 * v.z, m10 * v.x + m11 * v.y + m12 * v.z,
+                       m20 * v.x + m21 * v.y + m22 * v.z);
 }
 
 __DEVICE__ float McpTfEncode(float x, int tf)
@@ -232,6 +258,51 @@ __DEVICE__ float McpNeutral(float x, float amount, float3 z0, float3 z1, float3 
     return 1.0f - k * (1.0f - McpSmooth01(_fabs(x) / _fmaxf(h, hmin)));
 }
 
+// Skin Protect: the MC Skin Guard skin qualifier at its default settings,
+// measured in the Rec.709 display encoding (camera log curves are measured
+// on their code values, like Skin Guard's Log direct mode).  0 .. 1.
+__DEVICE__ float McpSrgbEncode(float v)
+{
+    return (v <= 0.0031308f) ? 12.92f * v : 1.055f * _powf(v, 1.0f / 2.4f) - 0.055f;
+}
+
+__DEVICE__ float McpSkinWeight(float3 y, int tf)
+{
+    float3 s = y;
+    if (tf == TF_DI || tf == TF_LINEAR || tf == TF_ACESCCT)
+    {
+        float3 l;
+        if (tf == TF_ACESCCT)
+        {
+            float3 a = make_float3(McpCctDecode(y.x), McpCctDecode(y.y), McpCctDecode(y.z));
+            l = McpMul33(@@AP1_TO_REC709@@, a);
+        }
+        else
+        {
+            l = make_float3(McpDiDecode(y.x), McpDiDecode(y.y), McpDiDecode(y.z));
+            if (tf == TF_DI) l = McpMul33(@@DWG_TO_REC709@@, l);
+        }
+        s = make_float3(McpSrgbEncode(l.x), McpSrgbEncode(l.y), McpSrgbEncode(l.z));
+    }
+    float mx = _fmaxf(s.x, _fmaxf(s.y, s.z)), mn = _fminf(s.x, _fminf(s.y, s.z)), chroma = mx - mn;
+    if (chroma <= 1.0e-6f || mx <= 1.0e-6f) return 0.0f;
+    float h;
+    if (mx == s.x)      h = (s.y - s.z) / chroma;
+    else if (mx == s.y) h = 2.0f + (s.z - s.x) / chroma;
+    else                h = 4.0f + (s.x - s.y) / chroma;
+    float hue = h * 60.0f;
+    if (hue < 0.0f) hue += 360.0f;
+    float sat = _fminf(chroma / mx, chroma / MCP_SKIN_DARK);
+    float d = hue - MCP_SKIN_HUE;
+    if (d > 180.0f) d -= 360.0f;
+    if (d < -180.0f) d += 360.0f;
+    float hw = 1.0f - McpSmooth01((_fabs(d) - MCP_SKIN_HALF) / (2.0f * MCP_SKIN_HFEATHER));
+    float u = _logf(_fmaxf(sat, 1.0e-4f)), lo = _logf(MCP_SKIN_SAT_LO), hi = _logf(MCP_SKIN_SAT_HI);
+    float f = MCP_SKIN_SFEATHER;
+    float sw = McpSmooth01((u - (lo - 2.0f * f)) / (2.0f * f)) * (1.0f - McpSmooth01((u - hi) / (2.0f * f)));
+    return hw * sw * McpSmooth01((sat - MCP_SKIN_NSTART) / MCP_SKIN_NWIDTH);
+}
+
 // Sat Mask weight of a pixel: 1 = toned, 0 = kept out.
 __DEVICE__ float McpSatKeep(float3 y, float stop, float satMask)
 {
@@ -245,7 +316,7 @@ __DEVICE__ float McpSatKeep(float3 y, float stop, float satMask)
 // g = (blend %, neutral pivot %, clean blacks %, clean whites %), satMask %;
 // zone sliders in -100 .. 100.
 __DEVICE__ float3 McpTone(float3 y, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4, float3 t, float4 g,
-                          float satMask)
+                          float satMask, float keep)
 {
     float zmax = 0.0f;
     zmax = _fmaxf(zmax, _fmaxf(_fabs(z0.x), _fmaxf(_fabs(z0.y), _fabs(z0.z))));
@@ -260,7 +331,7 @@ __DEVICE__ float3 McpTone(float3 y, float3 z0, float3 z1, float3 z2, float3 z3, 
     w *= McpClean(x - t.z, g.z, zmax, MCP_CLEAN_HEIGHT, MCP_CLEAN_POWER);
     w *= McpClean(MCP_WHITE_END - x, g.w, zmax, MCP_WHITE_HEIGHT, MCP_WHITE_POWER);
     w *= McpNeutral(x, g.y, z0, z1, z2, z3, z4);
-    w *= McpSatKeep(y, t.y, satMask);
+    w *= McpSatKeep(y, t.y, satMask) * keep;
     float k = MCP_SCALE * t.y * 0.01f * w;
     return make_float3(y.x + k * o.x, y.y + k * o.y, y.z + k * o.z);
 }
@@ -277,8 +348,8 @@ __DEVICE__ float4 McpCurves(int px, int py, int w, int h, float3 z0, float3 z1, 
     float lw = _fmaxf(1.0f, fh / 1080.0f);           // line width scales with the frame (UHD = 2x)
     float u0 = ((float)px + 0.5f) / fw, du = 1.0f / fw;
     float v = 1.0f - ((float)py + 0.5f) / fh, dv = 1.0f / fh;
-    float3 c0 = McpTone(make_float3(u0, u0, u0), z0, z1, z2, z3, z4, t, g, satMask);
-    float3 c1 = McpTone(make_float3(u0 + du, u0 + du, u0 + du), z0, z1, z2, z3, z4, t, g, satMask);
+    float3 c0 = McpTone(make_float3(u0, u0, u0), z0, z1, z2, z3, z4, t, g, satMask, 1.0f);
+    float3 c1 = McpTone(make_float3(u0 + du, u0 + du, u0 + du), z0, z1, z2, z3, z4, t, g, satMask, 1.0f);
     float kr = (c1.x - c0.x) / du * asp, kg = (c1.y - c0.y) / du * asp, kb = (c1.z - c0.z) / du * asp;
     float onR = (_fabs(v - c0.x) / dv < 2.0f * lw * _sqrtf(1.0f + kr * kr)) ? 1.0f : 0.0f;
     float onG = (_fabs(v - c0.y) / dv < 2.0f * lw * _sqrtf(1.0f + kg * kg)) ? 1.0f : 0.0f;
@@ -317,13 +388,22 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                uiHiMidG != 0.0f || uiHiMidB != 0.0f || uiHiR != 0.0f || uiHiG != 0.0f || uiHiB != 0.0f) &&
               uiBlend != 0.0f;
     float3 y = McpToWork(c, uiInput);
+    float skinW = (uiSkin > 0.0f || uiShowSkin) ? McpSkinWeight(y, uiInput) : 0.0f;
+    float skinKeep = 1.0f - uiSkin * 0.01f * skinW;
     float4 ov = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
     if (uiShowCurves) ov = McpCurves(p_X, p_Y, p_Width, p_Height, z0, z1, z2, z3, z4, t, g, uiSatMask);
     if (uiShowRamp && p_Y >= p_Height - p_Height / 12)
     {
         float u = ((float)p_X + 0.5f) / (float)p_Width;
         y = make_float3(u, u, u);
-        y = any ? McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask) : y;
+        y = any ? McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask, 1.0f) : y;
+        if (ov.w > 0.0f) y = McpOver(y, ov);
+        return McpFromWork(y, uiInput);
+    }
+    if (uiShowSkin)
+    {
+        float lum = @@LUMA_R@@f * y.x + @@LUMA_G@@f * y.y + @@LUMA_B@@f * y.z;
+        y = make_float3(lum + skinW * 0.9f * stop, lum + skinW * 0.2f * stop, lum - skinW * 1.2f * stop);
         if (ov.w > 0.0f) y = McpOver(y, ov);
         return McpFromWork(y, uiInput);
     }
@@ -335,9 +415,9 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         if (ov.w > 0.0f) y = McpOver(y, ov);
         return McpFromWork(y, uiInput);
     }
-    if (ov.w > 0.0f) return McpFromWork(McpOver(any ? McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask) : y, ov), uiInput);
+    if (ov.w > 0.0f) return McpFromWork(McpOver(any ? McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask, skinKeep) : y, ov), uiInput);
     if (!any) return c;
-    return McpFromWork(McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask), uiInput);
+    return McpFromWork(McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask, skinKeep), uiInput);
 }
 
 // MarkCaptures MC Pro Split

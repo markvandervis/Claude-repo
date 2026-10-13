@@ -37,6 +37,9 @@ worked on as DaVinci Intermediate.
                    21 (slider / 100)^1.5 stops: 30 leaves normal footage
                    alone, 69 halves the toning at code 1.0
     Sat Mask       fades it out on saturated colours (tones the neutrals)
+    Skin Protect   fades it out on skin tones: the MC Skin Guard qualifier at
+                   its defaults (hue 27 +-15 degrees in Rec.709 HSV, saturation
+                   10 .. 75 %, softness 50; greys are never selected)
 
 A Clean fade or the Neutral Pivot band is never made steeper than the
 strongest zone setting allows (below that the slider lowers its strength
@@ -61,6 +64,10 @@ CLEAN_MIN_STOPS = 3.0                   # minimum fade height at a zone slider o
 NEUTRAL_WIDTH = 6.9                     # Neutral Pivot band half width in stops at 100
 NEUTRAL_GUARD = 1.65                    # band never steeper than 1.65 x the offset near the pivot (in stops)
 SAT_CHROMA = 0.08             # chroma (log) at which Sat Mask is fully on
+# Skin Protect: the MC Skin Guard qualifier at its default settings
+SKIN_HUE, SKIN_HALF_WIDTH, SKIN_HUE_FEATHER = 27.0, 15.0, 7.0
+SKIN_SAT_LO, SKIN_SAT_HI, SKIN_SAT_FEATHER = 0.10, 0.75, 0.40
+SKIN_DARK_CHROMA, SKIN_NEUTRAL_START, SKIN_NEUTRAL_WIDTH = 0.02, 0.005, 0.03
 LUMA = (0.30, 0.60, 0.10)
 
 DWG_TO_REC709 = np.array([[1.89871504, -0.79180471, -0.10691033],
@@ -79,7 +86,7 @@ ENCODINGS = [("TF_DI", "DaVinci Intermediate"), ("TF_ACESCCT", "ACEScct"), ("TF_
              ("TF_LINEAR", "Scene Linear")]
 
 DEFAULTS = dict(zones=np.zeros((5, 3)), blend=100.0, pivot=0.0, neutral=0.0, clean_blacks=30.0,
-                clean_whites=30.0, sat_mask=0.0)
+                clean_whites=30.0, sat_mask=0.0, skin=0.0)
 
 _C4A = (2.0 ** 18 - 16.0) / 117.45
 _C4B = (1023.0 - 95.0) / 1023.0
@@ -162,6 +169,44 @@ def _logistic(t):
     return 1.0 / (1.0 + math.exp(-t)) if t > -60.0 else 0.0
 
 
+def srgb_encode(v):
+    return 12.92 * v if v <= 0.0031308 else 1.055 * v ** (1.0 / 2.4) - 0.055
+
+
+def skin_rgb(y, tf):
+    """the pixel in the Rec.709 display encoding the skin qualifier measures in
+    (log curves without a decode here are measured directly, like MC Skin
+    Guard's Log direct mode)"""
+    if tf == "TF_DI":
+        return np.array([srgb_encode(v) for v in DWG_TO_REC709 @ np.array([di_decode(c) for c in y])])
+    if tf == "TF_LINEAR":
+        return np.array([srgb_encode(di_decode(c)) for c in y])
+    if tf == "TF_ACESCCT":
+        return np.array([srgb_encode(v) for v in AP1_TO_REC709 @ np.array([cct_decode(c) for c in y])])
+    return np.array(y, dtype=float)
+
+
+def skin_weight(y, tf):
+    s = skin_rgb(y, tf)
+    mx, mn = float(s.max()), float(s.min())
+    chroma = mx - mn
+    if chroma <= 1e-6 or mx <= 1e-6:
+        return 0.0
+    if mx == s[0]:
+        h = (s[1] - s[2]) / chroma
+    elif mx == s[1]:
+        h = 2.0 + (s[2] - s[0]) / chroma
+    else:
+        h = 4.0 + (s[0] - s[1]) / chroma
+    hue = (h * 60.0) % 360.0
+    sat = min(chroma / mx, chroma / SKIN_DARK_CHROMA)
+    d = (hue - SKIN_HUE + 180.0) % 360.0 - 180.0
+    hw = 1.0 - smooth01((abs(d) - SKIN_HALF_WIDTH) / (2.0 * SKIN_HUE_FEATHER))
+    u, lo, hi, f = math.log(max(sat, 1e-4)), math.log(SKIN_SAT_LO), math.log(SKIN_SAT_HI), SKIN_SAT_FEATHER
+    sw = smooth01((u - (lo - 2.0 * f)) / (2.0 * f)) * (1.0 - smooth01((u - hi) / (2.0 * f)))
+    return hw * sw * smooth01((sat - SKIN_NEUTRAL_START) / SKIN_NEUTRAL_WIDTH)
+
+
 def zone_weights(x):
     f = [_logistic((x - (ZONE_CENTRE0 + ZONE_STEP * (j + 0.5))) / ZONE_TAU) for j in range(4)]
     c4 = ZONE_CENTRE0 + 4.0 * ZONE_STEP
@@ -210,6 +255,8 @@ def tone(y, p, tf="TF_DI"):
     if p["sat_mask"] > 0.0:
         m = float(np.linalg.norm(y - y.mean()))
         w *= 1.0 - p["sat_mask"] / 100.0 * smooth01(m / (SAT_CHROMA * stop / STOP))
+    if p["skin"] > 0.0:
+        w *= 1.0 - p["skin"] / 100.0 * skin_weight(y, tf)
     return y + SCALE * w * o
 
 

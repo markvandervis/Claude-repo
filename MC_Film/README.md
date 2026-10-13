@@ -161,9 +161,9 @@ They sit in the full film chain shown above (Halation before MC Film Negative, G
 - Halation: an even field is untouched, nothing ever darkens, no cyan cores on any gauge, the halo colour, gauge scaling and the threshold.
 - Both DCTLs match the Python reference (`tools/mcfilm_effects.py`).
 
-## MC Pro Split v0.9 (RGB split tone, five zones)
+## MC Pro Split v1.0 (RGB split tone, five zones)
 
-`MC_Pro-Split-v0.9.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It is made to sit in a PowerGrade, and it will be part of the OFX plugin.
+`MC_Pro-Split-v1.0.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It is made to sit in a PowerGrade, and it will be part of the OFX plugin.
 
 **PowerGrade order (DaVinci Wide Gamut):**
 
@@ -192,12 +192,14 @@ The five zones are broad and overlap. They lie between four soft boundaries at �
 | Clean Blacks | How far up from black the toning is faded out (default 30) |
 | Clean Whites | Fades the toning out towards white, gently: 30 leaves normal footage alone, about 70 halves it at white (default 30) |
 | Sat Mask | Keeps the toning off saturated colours, in % |
+| Skin Protect | Keeps skin tones out of the toning, in %, with the MC Skin Guard skin qualifier (hue 27° ±15°, saturation 10–75 %). Greys and other colours are toned as usual. |
 | Show Curves | On by default. Red, green and blue curves of a grey ramp over the whole frame and the middle grey line. The lines are see-through and add up: unchanged they form one white line, pulling red down leaves cyan + red |
 | Highlight Sat Mask | The picture in grey, with the colours Sat Mask keeps out painted magenta |
+| Highlight Skin | The picture in grey, with the skin Skin Protect keeps out painted orange |
 | Show Ramp | A toned grey ramp along the bottom of the frame |
 | Transfer Function | DaVinci Intermediate (default), ACEScct, ARRI LogC3, ARRI LogC4, Sony S-Log3, Panasonic V-Log, Canon Log 3, RED Log3G10, Cineon Log, Scene Linear |
 
-`docs/prosplit.png` shows a test chart before and after, and with Show Curves on. `python3 tests/test_prosplit.py` checks it (58 checks):
+`docs/prosplit.png` shows a test chart before and after, and with Show Curves on. `python3 tests/test_prosplit.py` checks it (64 checks):
 - Identity at defaults for every transfer function, and DCTL == reference for every transfer function.
 - Grey ramps never reverse for extreme and random zone settings.
 - Every zone acts only where it should, and every control and view acts in the right direction.
@@ -208,7 +210,7 @@ The full feature-by-feature status is in `docs/FEATURES.md`.
 
 **DCTLs: colour, per pixel (next)**
 - ~~Bleach Bypass~~ (done in Core v0.2)
-- ~~Cast & Crossover~~ (done: MC Pro Split v0.9, an RGB split tone in five zones)
+- ~~Cast & Crossover~~ (done: MC Pro Split v1.0, an RGB split tone in five zones)
 - ~~Film Sat~~ (done in Core v0.2), Tone Core, Curves
 - Palette (harmoniser)
 - Balance (skin-driven white balance and exposure; reuses the MC Skin Guard qualifier)

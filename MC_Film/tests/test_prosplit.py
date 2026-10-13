@@ -30,7 +30,7 @@ EXE = os.path.join(t.HERE, "mcp_prosplit")
 ENC = {e: i for i, (e, _) in enumerate(ps.ENCODINGS)}
 ZVAR = ("Lo", "LoMid", "Mid", "HiMid", "Hi")          # zone index 0 .. 4
 UI = dict(blend="uiBlend", pivot="uiPivot", neutral="uiNeutral", clean_blacks="uiCleanBlacks",
-          clean_whites="uiCleanWhites", sat_mask="uiSatMask")
+          clean_whites="uiCleanWhites", sat_mask="uiSatMask", skin="uiSkin")
 
 
 DI_PIV, DI_STOP, _ = ps.tf_constants("TF_DI", 0.0)
@@ -93,12 +93,12 @@ def test_static():
     check(sorted(params) == sorted(tips), "every control has one tooltip")
     labels = re.findall(r"^DEFINE_UI_PARAMS\(\w+, ([^,]+), DCTLUI_SLIDER", src, re.M)
     zl = ["%s %s" % (z, c) for z in ("Hi", "Hi-Mid", "Mid", "Lo-Mid", "Lo") for c in ("\U0001F7E5", "\U0001F7E9", "\U0001F7E6")]
-    check(labels == zl + ["Blend", "Pivot", "Neutral Pivot", "Clean Blacks", "Clean Whites", "Sat Mask"],
-          "sliders: five zones x red / green / blue squares from Hi to Lo, then Blend, Pivot, Neutral Pivot, Clean Blacks / Whites, Sat Mask")
+    check(labels == zl + ["Blend", "Pivot", "Neutral Pivot", "Clean Blacks", "Clean Whites", "Sat Mask", "Skin Protect"],
+          "sliders: five zones x red / green / blue squares from Hi to Lo, then Blend, Pivot, Neutral Pivot, Clean Blacks / Whites, Sat Mask, Skin Protect")
     code = re.sub(r"//.*", "", src)
     intr = set(re.findall(r"\b(_[a-z][a-z0-9]*)\s*\(", code))
     check("_exp10f" not in code and intr <= {"_fmaxf", "_fminf", "_fabs", "_sqrtf", "_powf", "_exp2f", "_log2f",
-                                             "_expf", "_saturatef", "_clampf", "_floor"},
+                                             "_expf", "_logf", "_saturatef", "_clampf", "_floor"},
           "only standard intrinsics, no _exp10f (%s)" % sorted(intr))
     check("@@" not in src and not re.search(r"\bdouble\b", code), "no template fields, no double precision")
     check("DEFINE_UI_PARAMS(uiShowCurves, Show Curves, DCTLUI_CHECK_BOX, 1)" in src, "Show Curves is on by default")
@@ -133,7 +133,7 @@ def test_cross():
             zones = random_zones(rng)
             p = dict(blend=rng.uniform(0, 100), pivot=rng.uniform(-3, 3), neutral=rng.choice([0.0, rng.uniform(0, 100)]),
                      clean_blacks=rng.uniform(0, 100), clean_whites=rng.uniform(0, 100),
-                     sat_mask=rng.choice([0.0, rng.uniform(0, 100)]))
+                     sat_mask=rng.choice([0.0, rng.uniform(0, 100)]), skin=rng.choice([0.0, rng.uniform(0, 100)]))
             w = max(w, maxdiff(run(px, zones, uiInput=i, **p), ref(px, e, zones, **p)))
         check(w < 2e-5 if e != "TF_LINEAR" else w < 5e-4, "%s: max |DCTL - reference| = %.1e" % (e, w))
 
@@ -239,6 +239,29 @@ def test_controls():
           "Sat Mask 100 leaves a saturated colour alone but still tones grey")
 
 
+def test_skin():
+    section("5b. Skin Protect")
+    zz = Z(Lo=(-0.6, 0.3, 0.8), LoMid=(-0.5, 0.2, 0.5), Mid=(-0.4, 0.1, 0.4), HiMid=(0.4, 0.1, -0.4), Hi=(0.5, 0, -0.5))
+    skin = [col(0.30, 0.17, 0.11), col(0.06, 0.033, 0.02), col(0.6, 0.38, 0.27)]
+    other = [col(0.05, 0.10, 0.30), col(0.08, 0.25, 0.06), grey((-2,))[0], grey((1,))[0]]
+    s0 = run(skin, zz)
+    s1 = run(skin, zz, skin=100)
+    check(maxdiff(s1, skin) < 0.1 * maxdiff(s0, skin), "Skin Protect 100 keeps skin tones out of the toning "
+          "(change %.4f vs %.4f)" % (maxdiff(s1, skin), maxdiff(s0, skin)))
+    check(run(other, zz, skin=100) == run(other, zz), "greys and non-skin colours are toned exactly as without it")
+    half = maxdiff(run(skin[:1], zz, skin=50), skin[:1])
+    check(0.3 * maxdiff(s0[:1], skin[:1]) < half < 0.7 * maxdiff(s0[:1], skin[:1]), "Skin Protect 50 keeps half out")
+    hs = run(skin[:1] + other[2:3], uiShowSkin=1)
+    check(hs[0][0] > hs[0][2] + 0.05 and max(hs[1]) - min(hs[1]) < 1e-6,
+          "Highlight Skin paints skin orange and shows the rest in grey")
+    for tf in ("TF_SLOG3", "TF_ACESCCT"):
+        sk = [tuple(f32(v) for v in (0.52, 0.42, 0.36))] if tf == "TF_SLOG3" else \
+             [tuple(f32(v) for v in (0.45, 0.40, 0.36))]
+        a = maxdiff(run(sk, zz, uiInput=ENC[tf], skin=100), sk)
+        b = maxdiff(run(sk, zz, uiInput=ENC[tf]), sk)
+        check(a < 0.2 * b, "%s: skin is found and protected too (%.4f vs %.4f)" % (tf, a, b))
+
+
 def test_curves_extremes():
     section("6. Show Curves, extremes")
     rng = random.Random(4)
@@ -281,6 +304,7 @@ def main():
     test_cross()
     test_ramps()
     test_controls()
+    test_skin()
     test_curves_extremes()
     print("\n%d checks, %d failed" % (t._n, len(t._fail)))
     return 1 if t._fail else 0
