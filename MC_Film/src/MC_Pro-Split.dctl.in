@@ -216,21 +216,22 @@ __DEVICE__ float4 McpCurves(int px, int py, int w, int h, float3 z0, float3 z1, 
                             float3 t, float4 g, float satMask)
 {
     float fw = (float)w, fh = (float)h, asp = fw / fh;
+    float lw = _fmaxf(1.0f, fh / 1080.0f);           // line width scales with the frame (UHD = 2x)
     float u0 = ((float)px + 0.5f) / fw, du = 1.0f / fw;
     float v = 1.0f - ((float)py + 0.5f) / fh, dv = 1.0f / fh;
     float3 c0 = McpTone(make_float3(u0, u0, u0), z0, z1, z2, z3, z4, t, g, satMask);
     float3 c1 = McpTone(make_float3(u0 + du, u0 + du, u0 + du), z0, z1, z2, z3, z4, t, g, satMask);
     float kr = (c1.x - c0.x) / du * asp, kg = (c1.y - c0.y) / du * asp, kb = (c1.z - c0.z) / du * asp;
-    if (_fabs(v - c0.x) / dv < 1.3f * _sqrtf(1.0f + kr * kr)) return make_float4(0.75f, 0.12f, 0.12f, 1.0f);
-    if (_fabs(v - c0.y) / dv < 1.3f * _sqrtf(1.0f + kg * kg)) return make_float4(0.15f, 0.70f, 0.15f, 1.0f);
-    if (_fabs(v - c0.z) / dv < 1.3f * _sqrtf(1.0f + kb * kb)) return make_float4(0.20f, 0.30f, 0.85f, 1.0f);
-    if (_fabs(v - u0) / dv < 1.0f * _sqrtf(1.0f + asp * asp)) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
-    if (_fabs(u0 - t.x) < 1.2f * du) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
+    if (_fabs(v - c0.x) / dv < 3.0f * lw * _sqrtf(1.0f + kr * kr)) return make_float4(0.75f, 0.12f, 0.12f, 1.0f);
+    if (_fabs(v - c0.y) / dv < 3.0f * lw * _sqrtf(1.0f + kg * kg)) return make_float4(0.15f, 0.70f, 0.15f, 1.0f);
+    if (_fabs(v - c0.z) / dv < 3.0f * lw * _sqrtf(1.0f + kb * kb)) return make_float4(0.20f, 0.30f, 0.85f, 1.0f);
+    if (_fabs(v - u0) / dv < 2.2f * lw * _sqrtf(1.0f + asp * asp)) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
+    if (_fabs(u0 - t.x) < 2.5f * lw * du) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
     for (int i = 0; i < 5; ++i)
     {
         if (i == 2) continue;
         float cz = t.x + (MCP_ZONE_C0 + MCP_ZONE_STEP * (float)i) * t.y;
-        if (_fabs(u0 - cz) < 0.6f * du && ((py / 6) % 2 == 0)) return make_float4(0.40f, 0.40f, 0.40f, 1.0f);
+        if (_fabs(u0 - cz) < 1.5f * lw * du && ((py / 12) % 2 == 0)) return make_float4(0.40f, 0.40f, 0.40f, 1.0f);
     }
     return make_float4(0.0f, 0.0f, 0.0f, 0.0f);
 }

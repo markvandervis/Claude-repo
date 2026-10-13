@@ -45,7 +45,7 @@ HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
 HALO_VERSION = "0.6"
 HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % HALO_VERSION)
 SPLIT_TEMPLATE = os.path.join(ROOT, "src", "MC_Pro-Split.dctl.in")
-SPLIT_VERSION = "0.3"
+SPLIT_VERSION = "0.4"
 SPLIT_OUTPUT = os.path.join(ROOT, "MC_Pro-Split-v%s.dctl" % SPLIT_VERSION)
 
 DATA_NOTICE = """\

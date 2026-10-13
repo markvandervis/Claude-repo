@@ -214,7 +214,7 @@ def test_curves_extremes():
     sm = run([col(0.3, 0.02, 0.02), (f32(0.4), f32(0.4), f32(0.4))], uiShowSatMask=1, sat_mask=100)
     check(sm[0][1] < sm[0][0] and sm[0][1] < sm[0][2] and max(sm[1]) - min(sm[1]) < 1e-6,
           "Highlight Sat Mask paints the masked colours magenta and shows the rest in grey")
-    check(5 < len(line) < 600, "Show Curves draws thin lines over the frame (%d of 3000 random pixels)" % len(line))
+    check(5 < len(line) < 1500, "Show Curves draws thin lines over the frame (%d of 3000 random pixels)" % len(line))
     check(all(on[i] == tone[i] for i in range(len(pts)) if i not in line) and off[0] == (f32(0.4), f32(0.3), f32(0.2)),
           "elsewhere the picture is the toned image, unchanged")
     wild = [(0, 0, 0), (1e6, 1e6, 1e6), (-5, -5, -5), (50, -3, 0.2), (0.5, 0.5, -20), (1e-30, 0, 0)]

@@ -161,9 +161,9 @@ They sit in the full film chain shown above (Halation before MC Film Negative, G
 - Halation: an even field is untouched, nothing ever darkens, no cyan cores on any gauge, the halo colour, gauge scaling and the threshold.
 - Both DCTLs match the Python reference (`tools/mcfilm_effects.py`).
 
-## MC Pro Split v0.3 (RGB split tone, five zones)
+## MC Pro Split v0.4 (RGB split tone, five zones)
 
-`MC_Pro-Split-v0.3.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It is made to sit in a PowerGrade, and it will be part of the OFX plugin.
+`MC_Pro-Split-v0.4.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It is made to sit in a PowerGrade, and it will be part of the OFX plugin.
 
 **PowerGrade order (DaVinci Wide Gamut):**
 
@@ -199,7 +199,7 @@ The full feature-by-feature status is in `docs/FEATURES.md`.
 
 **DCTLs: colour, per pixel (next)**
 - ~~Bleach Bypass~~ (done in Core v0.2)
-- ~~Cast & Crossover~~ (done: MC Pro Split v0.3, an RGB split tone in five zones)
+- ~~Cast & Crossover~~ (done: MC Pro Split v0.4, an RGB split tone in five zones)
 - ~~Film Sat~~ (done in Core v0.2), Tone Core, Curves
 - Palette (harmoniser)
 - Balance (skin-driven white balance and exposure; reuses the MC Skin Guard qualifier)
