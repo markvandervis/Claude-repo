@@ -97,7 +97,7 @@ Edit `src/MC_Film-Core.dctl.in`, never the generated `.dctl`.
 
 ---
 
-## MC Film Grain v0.1 and MC Film Halation v0.1
+## MC Film Grain v0.2 and MC Film Halation v0.2
 
 The full film chain in Resolve:
 
@@ -108,10 +108,10 @@ The full film chain in Resolve:
 
 Use the same Negative Stock on all Core and Grain nodes, and the same Gauge on Grain and Halation. `docs/film_look.png` shows this chain on 250D → 2383 for Super 35, Super 16 and Super 8.
 
-### MC Film Grain (`MC_Film-Grain-v0.1.dctl`), on the Cineon negative
+### MC Film Grain (`MC_Film-Grain-v0.2.dctl`), on the Cineon negative
 - **Grain model:** each dye layer is a field of real, randomly placed grains, not interpolated noise. It has no lattice, no grid pattern and an exactly known variance.
 - **Calibration:** strength follows the stock's RMS granularity, scaled with Selwyn's law to the grain size. It grows with the square root of density. Granularity figures are approximate datasheet-class values per stock.
-- **Gauge:** Super 8 / 16mm / Super 16 / Super 35 / 65mm, together with the timeline width, sets grain size and strength on screen.
+- **Gauge:** 8mm / Super 8 / 16mm / Super 16 / Super 35 / 65mm, together with the timeline width, sets grain size and strength on screen.
 - **Colour:** the grain gets its colour from the dyes, because the print renders it.
 - **Controls:**
   - Grain Amount and Grain Size.
@@ -119,7 +119,7 @@ Use the same Negative Stock on all Core and Grain nodes, and the same Gauge on G
   - Shadow Grain.
   - Grain Seed. A DCTL has no frame number, so keyframe Seed linearly from 0 on the first frame to the number of frames on the last to make the grain move.
 
-### MC Film Halation (`MC_Film-Halation-v0.1.dctl`), before the negative
+### MC Film Halation (`MC_Film-Halation-v0.2.dctl`), before the negative
 - **Physics:** light scattered back through the film base re-exposes mainly the red layer, giving the red-orange glow.
 - **Redistribution, not addition:** light is moved, not added. An even field is untouched, so the stock's measured response stays calibrated; red light is conserved to within 0.05%.
 - **Gauge:** the halo is sized on the film in micrometres, so it grows on smaller gauges.

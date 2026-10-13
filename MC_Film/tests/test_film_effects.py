@@ -98,7 +98,7 @@ def to_density(c):
 
 
 NEG250 = [k for _, _, k in m.NEGATIVES].index("kodak_vision3_250d")
-S8, G16, S16, S35, G65 = range(5)
+G8, S8, G16, S16, S35, G65 = range(6)
 
 
 # ---------------------------------------------------------------------------

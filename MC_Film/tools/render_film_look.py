@@ -44,7 +44,7 @@ def scene():
 def frame_io(exe, img, args, frame=True):
     flat = img.reshape(-1, 3)
     head = "%d %d\n" % (W, H) if frame else ""
-    payload = head + "\n".join("%r %r %r" % tuple(p) for p in flat) + "\n"
+    payload = head + "\n".join("%.9g %.9g %.9g" % tuple(float(v) for v in p) for p in flat) + "\n"
     r = subprocess.run([os.path.join(T, exe)] + args, input=payload, capture_output=True, text=True, check=True)
     return np.array([[float.fromhex(v) for v in l.split()] for l in r.stdout.splitlines()]).reshape(H, W, 3)
 
@@ -65,7 +65,7 @@ def chain(lin, gauge, neg=1, prt=0):
 def main():
     img = scene()
     rows = []
-    for gauge, name in ((3, "Super 35"), (2, "Super 16"), (0, "Super 8")):
+    for gauge, name in ((4, "Super 35"), (3, "Super 16"), (1, "Super 8")):
         out = np.clip(chain(img, gauge), 0, 1)
         rows.append((name, out))
         print("rendered", name)

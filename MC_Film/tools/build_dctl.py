@@ -30,7 +30,7 @@ VERSION = "0.5"
 TABLES_JSON = os.path.join(ROOT, "data", "mcfilm_tables.json")
 TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Core.dctl.in")
 OUTPUT = os.path.join(ROOT, "MC_Film-Core-v%s.dctl" % VERSION)
-EFFECTS_VERSION = "0.1"
+EFFECTS_VERSION = "0.2"
 GRAIN_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Grain.dctl.in")
 GRAIN_OUTPUT = os.path.join(ROOT, "MC_Film-Grain-v%s.dctl" % EFFECTS_VERSION)
 HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
@@ -154,7 +154,8 @@ def fill(template, output, subs):
 
 
 def generate_effects():
-    gauge = {"GAUGE_ENUMS": ", ".join(g[0] for g in fx.GAUGES),
+    gauge = {"GAUGE_DEFAULT": str([g[0] for g in fx.GAUGES].index("GAUGE_S35")),
+             "GAUGE_ENUMS": ", ".join(g[0] for g in fx.GAUGES),
              "GAUGE_NAMES": ", ".join(g[1] for g in fx.GAUGES)}
     widths = [g[2] * 1000.0 for g in fx.GAUGES]
     grain_tables = c_array("MCG_GAUGE_WIDTH_UM", widths)

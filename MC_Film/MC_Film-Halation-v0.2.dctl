@@ -3,7 +3,7 @@
 // www.markcaptures.com
 
 // ============================================================================
-//  MC_Film-Halation-v0.1.dctl  -  MC Film Halation
+//  MC_Film-Halation-v0.2.dctl  -  MC Film Halation
 //  ---------------------------------------------------------------------------
 //  Halation for DaVinci Resolve Studio: light that passes through the
 //  emulsion, scatters in the film base and comes back to re-expose the
@@ -34,7 +34,7 @@
 //  golden-angle spiral, all with equal weight, and the spiral is rotated per
 //  pixel so the sampling shows as fine noise instead of rings.
 //
-//  Version : 0.1
+//  Version : 0.2
 //  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
 //            You may use this file for personal and commercial grading work.
 //            You may not redistribute, share, sell, sublicense or publish it,
@@ -48,8 +48,8 @@
 
 DEFINE_UI_PARAMS(uiHalAmount, Halation Amount, DCTLUI_SLIDER_FLOAT, 0.25, 0.0, 1.0, 0.01)
 DEFINE_UI_TOOLTIP(uiHalAmount, "Fraction of the red layer's light that is scattered back through the base. Modern cine stocks with an anti-halation backing are around 0.1 - 0.3; a stock without it can reach 0.6.")
-DEFINE_UI_PARAMS(uiHalSize, Halation Size, DCTLUI_SLIDER_FLOAT, 1.0, 0.25, 4.0, 0.01)
-DEFINE_UI_TOOLTIP(uiHalSize, "Halo radius relative to a typical film base. It is set on the film, so a smaller gauge gives a bigger halo on screen.")
+DEFINE_UI_PARAMS(uiHalSize, Halation Size, DCTLUI_SLIDER_FLOAT, 1.0, 0.1, 4.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHalSize, "Halo radius relative to a typical film base. It is set on the film, so a smaller gauge gives a bigger halo on screen; lower it on small gauges for a halo that keeps its size on screen.")
 DEFINE_UI_PARAMS(uiHalColour, Halation Colour, DCTLUI_SLIDER_FLOAT, 0.2, 0.0, 0.6, 0.01)
 DEFINE_UI_TOOLTIP(uiHalColour, "How much of the scattered light also reaches the green layer: 0 is a deep red halo, higher values move it towards orange.")
 DEFINE_UI_PARAMS(uiHalThreshold, Highlight Threshold, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 6.0, 0.1)
@@ -60,7 +60,7 @@ DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
 
 DEFINE_UI_PARAMS(uiInput, Encoding, DCTLUI_COMBO_BOX, 0, {HE_DWG, HE_ACESCCT, HE_LINEAR}, {DaVinci WG Intermediate, ACES AP1 ACEScct, Scene Linear})
 DEFINE_UI_TOOLTIP(uiInput, "Encoding of this node's input; the output is in the same encoding.")
-DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, 3, {GAUGE_S8, GAUGE_16, GAUGE_S16, GAUGE_S35, GAUGE_65}, {Super 8, 16mm, Super 16, Super 35, 65mm})
+DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, 4, {GAUGE_8, GAUGE_S8, GAUGE_16, GAUGE_S16, GAUGE_S35, GAUGE_65}, {8mm, Super 8, 16mm, Super 16, Super 35, 65mm})
 DEFINE_UI_TOOLTIP(uiGauge, "Film format: sets how big the halo is on screen. Use the same gauge as on MC Film Grain.")
 DEFINE_UI_PARAMS(uiQuality, Quality, DCTLUI_COMBO_BOX, 1, {HQ_DRAFT, HQ_GOOD, HQ_BEST}, {Draft 32, Good 64, Best 128})
 DEFINE_UI_TOOLTIP(uiQuality, "Number of samples of the halo. More is smoother and slower.")
@@ -74,8 +74,8 @@ DEFINE_UI_TOOLTIP(uiQuality, "Number of samples of the halo. More is smoother an
 #define MCH_MIDGRAY         0.184f
 #define MCH_TAPS_MAX        128
 
-__CONSTANT__ float MCH_GAUGE_WIDTH_UM[5] = {
-    5790.0f, 10260.0f, 12520.0f, 24890.0f, 52480.0f
+__CONSTANT__ float MCH_GAUGE_WIDTH_UM[6] = {
+    4800.0f, 5790.0f, 10260.0f, 12520.0f, 24890.0f, 52480.0f
 };
 __CONSTANT__ float MCH_TAP_RADIUS[128] = {
     0.090284848f, 0.16001621f, 0.20999586f, 0.25189641f, 0.28910613f, 0.32317358f, 0.35496041f, 0.3850046f,

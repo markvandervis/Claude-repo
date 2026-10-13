@@ -15,6 +15,7 @@ import numpy as np
 
 # --- gauges: frame width of the camera aperture, in millimetres -------------
 GAUGES = [
+    ("GAUGE_8",   "8mm",          4.80),
     ("GAUGE_S8",  "Super 8",      5.79),
     ("GAUGE_16",  "16mm",         10.26),
     ("GAUGE_S16", "Super 16",     12.52),
@@ -176,7 +177,7 @@ def threshold(v, thr):
 
 
 def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.2, threshold_stops=0.0,
-                   gauge_i=3, quality=1):
+                   gauge_i=4, quality=1):
     """frame: row-major list of DWG / DI pixels.  Returns the same encoding."""
     radii, cs, sn = halo_taps()
     thr = MIDGRAY * 2.0 ** threshold_stops if threshold_stops > 0.0 else 0.0

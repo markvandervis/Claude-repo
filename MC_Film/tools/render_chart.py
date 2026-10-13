@@ -77,7 +77,7 @@ def di_encode(x):
 def run(img_lin, neg, prt, extra=()):
     dwg = (np.linalg.inv(m.DWG_TO_REC709) @ img_lin.reshape(-1, 3).T).T
     enc = di_encode(dwg)
-    payload = "\n".join("%r %r %r" % tuple(p) for p in enc) + "\n"
+    payload = "\n".join("%.9g %.9g %.9g" % tuple(float(v) for v in p) for p in enc) + "\n"
     args = ["uiNegative=%d" % neg, "uiPrint=%d" % prt] + list(extra)
     r = subprocess.run([HARNESS] + args, input=payload, capture_output=True, text=True, check=True)
     out = np.array([[float.fromhex(v) for v in l.split()] for l in r.stdout.splitlines()])

@@ -64,7 +64,7 @@ DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
 
 DEFINE_UI_PARAMS(uiNegative, Negative Stock, DCTLUI_COMBO_BOX, 1, {@@NEG_ENUMS@@}, {@@NEG_NAMES@@})
 DEFINE_UI_TOOLTIP(uiNegative, "The negative stock, for its granularity. Use the same stock as on the MC Film Core nodes.")
-DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, 3, {@@GAUGE_ENUMS@@}, {@@GAUGE_NAMES@@})
+DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, @@GAUGE_DEFAULT@@, {@@GAUGE_ENUMS@@}, {@@GAUGE_NAMES@@})
 DEFINE_UI_TOOLTIP(uiGauge, "Film format. A smaller frame is enlarged more, so its grain is bigger and stronger on screen.")
 
 

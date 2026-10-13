@@ -19,7 +19,7 @@ Status: ✅ done · 🟡 partly / approximation · ⏳ planned · 🚫 not possi
 | Feature | MC Film | Status |
 |---|---|---|
 | Film stock library | Core · 13 negatives from measured data | ✅ |
-| Film format 8mm / Super 8 / 16 / Super 16 / 35 / 65 | Grain + Halation · Gauge | ✅ (8mm regular to add) |
+| Film format 8mm / Super 8 / 16 / Super 16 / 35 / 65 | Grain + Halation · Gauge (gauge presets: docs/PRESETS.md) | ✅ |
 | Film speed / Auto (stock) | Grain uses each stock's granularity, which is "Auto". A manual speed override goes into Grain. | 🟡 |
 | Strength (mix) | OFX global mix. In DCTL, use node Key Output gain. | ⏳ |
 | Exposure, Push / Pull | Core | ✅ |
@@ -48,7 +48,7 @@ Status: ✅ done · 🟡 partly / approximation · ⏳ planned · 🚫 not possi
 |---|---|---|
 | Halation (gauge-dependent) | MC Film Halation | ✅ (DCTL sampling speckle on tiny lights; OFX gets a real blur) |
 | Grain per dye layer, gauge-scaled | MC Film Grain | ✅ (animated by a keyframed Seed in DCTL, per frame in OFX) |
-| Irradiation / film resolution / acutance | Planned: an MTF-based softening per layer, gauge-scaled | ⏳ |
+| Irradiation / film resolution / acutance | Planned: emulsion scatter (the near-white part of a highlight glow) and MTF-based softening per layer, gauge-scaled | ⏳ next after the Negative Designer |
 | Pro Mist / diffusion | Planned | ⏳ |
 | Chromatic aberration, vignette, Petzval | Planned | ⏳ |
 | Gate weave & breath, dust & specks, film gate, perforations | Needs the frame number | ⏳ OFX |
