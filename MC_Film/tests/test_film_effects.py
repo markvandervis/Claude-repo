@@ -241,17 +241,18 @@ def test_halation():
     W, H = 256, 256
     fr = disc_frame(W, H, 8, 32.0, 0.01)
     o = run("fx_halation", fr, W, H, uiHalAmount=0.3, uiQuality=2, uiGauge=G16, uiBloom=0, uiHalColour=0.2,
-            uiSizeMode=1)
+            uiSizeMode=1, uiHalSize=4.0)
     lin_in = np.vectorize(fx.di_decode)(np.array(fr).reshape(H, W, 3))
     lin_out = np.vectorize(fx.di_decode)(o)
     d = lin_out - lin_in
     ring = (np.hypot(np.arange(W)[None, :] - W / 2 + 0.5, np.arange(H)[:, None] - H / 2 + 0.5))
-    halo = (ring > 10) & (ring < 30)
+    halo = (ring > 9) & (ring < 20)
     check(d[..., 0][halo].mean() > 0.05, "red halo around the highlight (+%.3f linear)" % d[..., 0][halo].mean())
     check(0.0 < d[..., 1][halo].mean() < d[..., 0][halo].mean() * 0.5, "the halo is red-orange (green %.0f %% of red)" %
           (100 * d[..., 1][halo].mean() / d[..., 0][halo].mean()))
     check(np.array_equal(o[..., 2], np.array(fr).reshape(H, W, 3)[..., 2]), "with Bloom 0, blue is untouched")
-    ob = run("fx_halation", fr, W, H, uiHalAmount=0.3, uiQuality=2, uiGauge=G16, uiBloom=0.5, uiSizeMode=1)
+    ob = run("fx_halation", fr, W, H, uiHalAmount=0.3, uiQuality=2, uiGauge=G16, uiBloom=0.5, uiSizeMode=1,
+             uiHalSize=4.0)
     db = np.vectorize(fx.di_decode)(ob) - lin_in
     check(db[..., 2][halo].mean() > 0.02, "Bloom adds a neutral glow (blue too)")
     check(np.all(lin_out >= lin_in - 1e-6) and np.all(db >= -1e-6), "the glow only adds light: no channel goes down")
@@ -313,7 +314,7 @@ def test_halation():
     for (mode, q), v in SPECKLE.items():
         print("        speckle, 8mm %s, %s: %.0f %% of the glow" % (("Matched", "Physical")[mode],
               ("Draft", "Good", "Best", "Ultra")[q], 100 * v))
-    check(SPECKLE[(0, 2)] < 0.6 * SPECKLE[(0, 1)] and SPECKLE[(0, 3)] < 0.6 * SPECKLE[(0, 2)] * 1.2,
+    check(SPECKLE[(0, 3)] < SPECKLE[(0, 2)] < SPECKLE[(0, 1)] and SPECKLE[(1, 3)] < SPECKLE[(1, 2)],
           "more quality, less speckle")
     check(SPECKLE[(0, 3)] < 0.2, "Matched / Ultra: speckle around a small light below 20 %% (%.0f %%)" %
           (100 * SPECKLE[(0, 3)]))

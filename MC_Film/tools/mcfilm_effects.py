@@ -42,13 +42,14 @@ LAYER_SIZE = (1.0, 0.9, 1.15)
 CINEON_BLACK = 95.0 / 1023.0
 CINEON_DPC = 2.046
 
-HALO_UM = 80.0
-MATCH_SIZE = 2.0          # Matched mode: Size 1 = the 35mm preset of docs/PRESETS.md
+HALO_UM = 100.0           # radius of the (bloom) glow disc on the film
+HALO_EDGE = 0.6           # soft edge of the disc: falls from 0.7 to 1.3 radii
+HALO_RED_SPREAD = 1.35    # halation (red, through the base) spreads further than bloom
+MATCH_SIZE = 1.0          # Matched mode: Size 1 = HALO_UM on Super 35
 MATCH_GROWTH = 0.07       # on-screen size growth (S35 width / gauge width)^0.07
 MATCH_STRENGTH = 0.6      # glow strength ~ (S35 width / gauge width)^0.6, from reference screenshots
 MATCH_COLOUR = 0.15       # colour 0.15 redder at 8mm
 HALO_TAPS = 256
-HALO_TRUNC = 6.0          # kernel truncated at 6 exponential scales
 MIDGRAY = 0.184
 GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
 
@@ -56,23 +57,22 @@ GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
 # ---------------------------------------------------------------------------
 #  halation kernel table
 # ---------------------------------------------------------------------------
+def halo_profile(r):
+    """The glow kernel: a disc of radius 1 with a soft, linear edge."""
+    return min(max((1.0 - r) / HALO_EDGE + 0.5, 0.0), 1.0)
+
+
 def halo_taps(n=HALO_TAPS):
-    """Radial quantiles of the 2-D exponential kernel (radial pdf r e^-r,
-    truncated) on a golden-angle spiral."""
-    def cdf(r):
-        return 1.0 - (1.0 + r) * math.exp(-r)
-    total = cdf(HALO_TRUNC)
+    """Radial quantiles of the soft-disc kernel (radial pdf r k(r)) on a
+    golden-angle spiral."""
+    rmax = 1.0 + 0.5 * HALO_EDGE
+    grid = np.linspace(0.0, rmax, 20001)
+    pdf = grid * np.array([halo_profile(r) for r in grid])
+    cdf = np.concatenate([[0.0], np.cumsum(0.5 * (pdf[1:] + pdf[:-1]) * np.diff(grid))])
+    cdf /= cdf[-1]
     radii, cos_, sin_ = [], [], []
     for i in range(n):
-        u = (i + 0.5) / n * total
-        lo, hi = 0.0, HALO_TRUNC
-        for _ in range(60):
-            mid = 0.5 * (lo + hi)
-            if cdf(mid) < u:
-                lo = mid
-            else:
-                hi = mid
-        radii.append(0.5 * (lo + hi))
+        radii.append(float(np.interp((i + 0.5) / n, cdf, grid)))
         a = i * GOLDEN_ANGLE
         cos_.append(math.cos(a))
         sin_.append(math.sin(a))
@@ -180,8 +180,8 @@ def threshold(v, thr):
     return x * x / (2.0 * thr)
 
 
-def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, threshold_stops=2.0,
-                   gauge_i=4, quality=1, bloom=0.25, matched=True):
+def halation_frame(frame, width, height, amount=0.10, size=1.0, colour=0.6, threshold_stops=1.0,
+                   gauge_i=4, quality=1, bloom=0.35, matched=True):
     """frame: row-major list of DWG / DI pixels.  Returns the same encoding."""
     radii, cs, sn = halo_taps()
     thr = MIDGRAY * 2.0 ** threshold_stops if threshold_stops > 0.0 else 0.0
@@ -193,6 +193,7 @@ def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, thre
         scale = HALO_UM * MATCH_SIZE * size / (ref_um / width) * (ref_um / gauge_um) ** MATCH_GROWTH
         strength = (ref_um / gauge_um) ** MATCH_STRENGTH
         amount = amount * strength
+        bloom = bloom * strength
         colour = max(colour - MATCH_COLOUR * g, 0.0)
     else:
         scale = HALO_UM * size / (gauge_um / width)
@@ -211,6 +212,7 @@ def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, thre
             rot = (h >> 8) * (6.28318531 / 16777216.0)
             cr, sr = math.cos(rot), math.sin(rot)
             tot = [0.0, 0.0, 0.0]
+            hal = 0.0
             n = 0
             for i in range((h & 7) % stride, HALO_TAPS, stride):
                 r = radii[i] * scale
@@ -218,19 +220,23 @@ def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, thre
                 oy = sn[i] * cr + cs[i] * sr
                 d = spread * r
                 for k in (-1, 0, 1):
-                    xx = min(max(x + int(math.floor(ox * r - oy * d * k + 0.5)), 0), width - 1)
-                    yy = min(max(y + int(math.floor(oy * r + ox * d * k + 0.5)), 0), height - 1)
-                    t = lin[yy * width + xx]
-                    tot[0] += t[0]
                     if bloom > 0.0:
+                        xx = min(max(x + int(math.floor(ox * r - oy * d * k + 0.5)), 0), width - 1)
+                        yy = min(max(y + int(math.floor(oy * r + ox * d * k + 0.5)), 0), height - 1)
+                        t = lin[yy * width + xx]
+                        tot[0] += t[0]
                         tot[1] += t[1]
                         tot[2] += t[2]
+                    if amount > 0.0:
+                        rw, dw = r * HALO_RED_SPREAD, d * HALO_RED_SPREAD
+                        xx = min(max(x + int(math.floor(ox * rw - oy * dw * k + 0.5)), 0), width - 1)
+                        yy = min(max(y + int(math.floor(oy * rw + ox * dw * k + 0.5)), 0), height - 1)
+                        hal += lin[yy * width + xx][0]
                     n += 1
             l = [di_decode(v) for v in c]
             own = [threshold(v, thr) for v in l]
-            dr = max(tot[0] / n - own[0], 0.0)
-            dg = max(tot[1] / n - own[1], 0.0) if bloom > 0.0 else 0.0
-            db = max(tot[2] / n - own[2], 0.0) if bloom > 0.0 else 0.0
-            new = [l[0] + (amount + bloom) * dr, l[1] + amount * colour * dr + bloom * dg, l[2] + bloom * db]
+            dh = max(hal / n - own[0], 0.0)
+            dr, dg, db = [max(tot[k] / n - own[k], 0.0) for k in range(3)]
+            new = [l[0] + amount * dh + bloom * dr, l[1] + amount * colour * dh + bloom * dg, l[2] + bloom * db]
             out.append(tuple(c[k] if new[k] == l[k] else di_encode(new[k]) for k in range(3)))
     return out

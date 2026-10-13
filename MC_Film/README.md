@@ -97,7 +97,7 @@ Edit `src/MC_Film-Core.dctl.in`, never the generated `.dctl`.
 
 ---
 
-## MC Film Grain v0.2 and MC Film Halation v0.5
+## MC Film Grain v0.2 and MC Film Halation v0.6
 
 The full film chain in Resolve:
 
@@ -119,19 +119,20 @@ Use the same Negative Stock on all Core and Grain nodes, and the same Gauge on G
   - Shadow Grain.
   - Grain Seed. A DCTL has no frame number, so keyframe Seed linearly from 0 on the first frame to the number of frames on the last to make the grain move.
 
-### MC Film Halation (`MC_Film-Halation-v0.5.dctl`), before the negative
+### MC Film Halation (`MC_Film-Halation-v0.6.dctl`), before the negative
 - **Physics:** light scattered back through the film base re-exposes mainly the red layer, giving the red-orange glow.
 - **A glow that only adds (v0.5):** each pixel gets the light arriving from brighter neighbours. No channel ever goes down, so the centre of a light keeps its colour at any setting (v0.4 could turn cores cyan on small gauges). An even area such as a sky is left as it is, so the stock's measured response stays calibrated.
+- **Glow shape (v0.6):** a disc with a soft edge, fitted to a reference 8mm headlight. Warm-white, with the red halation reaching a little further than the neutral bloom.
 - **Gauge:** the halo is sized on the film in micrometres, so it grows on smaller gauges.
 - **Controls:**
   - Halation Amount, Halation Size.
   - Halation Colour: red to orange.
   - Bloom: neutral emulsion scatter, for a warm-white glow.
-  - Highlight Threshold: stops above 18% grey where the glow starts (default 2). Everything below is untouched.
+  - Highlight Threshold: stops above 18% grey where the glow starts (default 1). Everything below is untouched; 0 is physical but lets the image noise glow into a faint haze.
   - Gauge.
   - Size Mode: Matched (default) keeps the on-screen size across gauges and makes small gauges stronger and warmer; Physical fixes the halo on the film.
   - Quality: 32 / 64 / 128 / 256 samples, each averaging three pixels.
-- **Known DCTL limit:** around very small, very bright lights a wide glow shows some speckle (8mm, 3-pixel light: Best 28%, Ultra 15%). Use Ultra for the final render. The OFX version will use a real multi-pass blur.
+- **Quality:** Best 128 is smooth for normal use; use Ultra for the final render. The OFX version will use a real multi-pass blur.
 
 ### Tests
 `python3 tests/test_film_effects.py` (after `tests/test_film_core.py`) runs 32 checks, including:
