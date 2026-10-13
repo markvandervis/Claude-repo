@@ -31,7 +31,7 @@ GRANULARITY_X1000 = {
     "kodak_vision3_500t": 8.0, "kodak_portra_160": 4.0, "kodak_portra_400": 4.5,
     "kodak_portra_800": 6.5, "kodak_ektar_100": 4.0, "kodak_gold_200": 7.0,
     "kodak_ultramax_400": 8.0, "fujifilm_pro_400h": 5.0, "fujifilm_c200": 8.0,
-    "fujifilm_xtra_400": 9.0,
+    "fujifilm_xtra_400": 9.0, "kodak_verita_200d": 6.0,
 }
 
 GRAIN_CELL_UM = 12.0

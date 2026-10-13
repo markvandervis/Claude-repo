@@ -3,3 +3,6 @@ tests/mcf_enums.h
 __pycache__/
 tests/fx_grain
 tests/fx_halation
+tests/mcf_negative
+tests/mcf_print
+tests/mcf_params_*.h

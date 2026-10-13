@@ -1,5 +1,5 @@
 // ============================================================================
-//  mcf_harness.cpp - runs the real MC_Film-Core DCTL on the CPU.
+//  mcf_harness.cpp - runs a real MC Film Core / Negative / Print DCTL on the CPU.
 //  Usage: mcf_harness [name=value ...] < pixels.txt > result.txt
 //  One pixel per line (three floats, decimal or hex); output three hex floats.
 // ============================================================================
@@ -13,36 +13,7 @@
 struct FloatParam { const char* name; float* value; };
 struct IntParam   { const char* name; int*   value; };
 
-static FloatParam g_f[] = {
-    { "uiExposure", &uiExposure }, { "uiPushPull", &uiPushPull }, { "uiNegContrast", &uiNegContrast },
-    { "uiPrintExposure", &uiPrintExposure }, { "uiPrinterRed", &uiPrinterRed },
-    { "uiPrinterGreen", &uiPrinterGreen }, { "uiPrinterBlue", &uiPrinterBlue },
-    { "uiPrintContrast", &uiPrintContrast }, { "uiFilmSat", &uiFilmSat },
-    { "uiBleachStrength", &uiBleachStrength }, { "uiSilverContrast", &uiSilverContrast },
-    { "uiSceneTemp", &uiSceneTemp }, { "uiSceneTint", &uiSceneTint }, { "uiLayerRed", &uiLayerRed },
-    { "uiLayerGreen", &uiLayerGreen }, { "uiLayerBlue", &uiLayerBlue },
-    { "uiXMidPos", &uiXMidPos },
-    { "uiXHold", &uiXHold },
-    { "uiHueTwist", &uiHueTwist },
-    { "uiChromaRolloff", &uiChromaRolloff },
-    { "uiVibrance", &uiVibrance },
-    { "uiRichness", &uiRichness },
-    { "uiHlDesat", &uiHlDesat },
-    { "uiSCyan", &uiSCyan },
-    { "uiSMagenta", &uiSMagenta },
-    { "uiSYellow", &uiSYellow },
-    { "uiHCyan", &uiHCyan },
-    { "uiHMagenta", &uiHMagenta },
-    { "uiHYellow", &uiHYellow },
-    { "uiOCyan", &uiOCyan },
-    { "uiOMagenta", &uiOMagenta },
-    { "uiOYellow", &uiOYellow },
-};
-static IntParam g_i[] = {
-    { "uiGamutCompress", &uiGamutCompress }, { "uiBypass", &uiBypass }, { "uiInput", &uiInput },
-    { "uiNegative", &uiNegative }, { "uiPrint", &uiPrint }, { "uiOutput", &uiOutput },
-    { "uiWhite", &uiWhite }, { "uiBleach", &uiBleach }, { "uiBleachStage", &uiBleachStage }, { "uiPreserveMid", &uiPreserveMid },
-};
+#include MCF_PARAMS
 
 int main(int argc, char** argv)
 {
@@ -60,10 +31,16 @@ int main(int argc, char** argv)
             if (!strcmp(buf, g_i[i].name)) { *g_i[i].value = (int)strtol(eq + 1, 0, 10); ok = true; }
         if (!ok) { fprintf(stderr, "unknown parameter %s\n", buf); return 2; }
     }
-    char t[3][64];
-    while (scanf("%63s %63s %63s", t[0], t[1], t[2]) == 3)
+    // one pixel per line: "r g b", or "x y r g b" for a pixel position
+    char line[512];
+    while (fgets(line, sizeof(line), stdin))
     {
-        float3 o = transform(1920, 1080, 0, 0, strtof(t[0], 0), strtof(t[1], 0), strtof(t[2], 0));
+        char t[5][64];
+        int n = sscanf(line, "%63s %63s %63s %63s %63s", t[0], t[1], t[2], t[3], t[4]);
+        if (n < 3) continue;
+        int x = 0, y = 0, k = 0;
+        if (n == 5) { x = (int)strtol(t[0], 0, 10); y = (int)strtol(t[1], 0, 10); k = 2; }
+        float3 o = transform(1920, 1080, x, y, strtof(t[k], 0), strtof(t[k + 1], 0), strtof(t[k + 2], 0));
         printf("%a %a %a\n", (double)o.x, (double)o.y, (double)o.z);
     }
     return 0;

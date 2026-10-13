@@ -8,78 +8,106 @@ Stock data: derived from **spektrafilm by Andrea Volpato** (https://github.com/a
 
 ---
 
-## MC Film Core v0.5: negative + print engine
+## MC Film Negative, MC Film Print and MC Film Core v0.6
 
-`MC_Film-Core-v0.5.dctl`
+The film engine comes as three DCTLs built from one source:
 
-A physically based simulation: the scene is exposed onto a colour negative, developed, printed with printer lights onto a print stock, then projected and viewed.
+| DCTL | What it does |
+|---|---|
+| `MC_Film-Negative-v0.6.dctl` | Scene → developed negative (Cineon log). Stock categories, exposure, development, Negative Contrast, Dye Crossover, Dye Saturation. |
+| `MC_Film-Print-v0.6.dctl` | Negative → projected print. Also **Print Only**: prints the graded image straight onto 2383 / 2393 / a paper, with no negative stock. |
+| `MC_Film-Core-v0.6.dctl` | Both in one node, for a quick look. |
 
-1. **Exposure onto the negative.** The Mallett & Yuksel 2019 spectral basis, lit by the stock's reference light (daylight or tungsten), against the stock's measured layer sensitivities.
-2. **Development.** Each layer's measured characteristic curve, with Exposure, Push/Pull and Negative Contrast.
-3. **Printing.** A 41-band spectral calculation: printer lamp × the negative's measured dyes and orange mask × the print stock's layer sensitivities. Printer lights are in Kodak printer points (1 point = 0.025 log E).
-4. **Print development.** The print stock's measured curves, with Print Contrast.
-5. **Projection.** The print dyes under the stock's viewing light (a xenon projector for 2383/2393, D50 for papers), CIE 1931 observer, adapted to D65, then the display encoding.
+The OFX plugin will be the combination of these, in the same order.
+
+### Node tree
+
+```
+Full film chain
+  [grade, DWG] -> [MC Film Halation] -> [MC Film Negative] -> [MC Film Grain] -> [MC Film Print] -> display
+                                       (Cineon out)                             (Input: Negative Cineon Log)
+
+Print only (no negative)
+  [grade, DWG] -> [MC Film Print  Input: DaVinci WG Intermediate (Print Only)]
+
+Further DWG effects after the print
+  ... -> [MC Film Print  Output: DaVinci WG Intermediate] -> [DWG effects]
+      -> [CST  DWG/DI -> Rec.709 Gamma 2.4, tone mapping None, gamut mapping None]
+```
+
+- Set the same negative on MC Film Negative, MC Film Grain and MC Film Print (Negative Stock).
+- Negative → Print gives the same picture as Core in one node (tested to 1e-5, the rounding of the Cineon link).
+- The print is display-referred, like a print LUT: put MC Film Print last. In a DWG colour-managed project, make sure the timeline doesn't add a second display transform, or use the DWG output and a CST.
+
+### How it works
+
+1. **Exposure onto the negative.** The Mallett & Yuksel 2019 spectral basis, lit by the stock's reference light, against the stock's measured layer sensitivities.
+2. **Development.** Each layer's measured characteristic curve, with Exposure, Push/Pull, Contrast and the rest of the Negative Contrast section.
+3. **Printing.** A 41-band spectral calculation: printer lamp × the negative's measured dyes and orange mask × the print stock's layer sensitivities, in Kodak printer points (1 point = 0.025 log E).
+4. **Print development and projection.** The print stock's measured curves, its dyes under the viewing light (xenon projector for 2383 / 2393, D50 for papers), CIE 1931 observer, adapted to the chosen white.
 
 Each negative and print pair is timed so that a scene 18% grey prints as a neutral grey at the laboratory aim density (1.0).
 
-**Stocks**
-- Negatives: Kodak Vision3 50D / 250D / 200T / 500T, Portra 160 / 400 / 800, Ektar 100, Gold 200, Ultramax 400, Fujifilm Pro 400H, C200, Xtra 400.
-- Prints: Kodak 2383, 2393, Portra Endura, Endura Premier, Supra Endura, Ultra Endura, Ektacolor Edge, Fujifilm Crystal Archive.
+### Stocks
 
-**Controls**
+| Stock Category | Negatives |
+|---|---|
+| Kodak Vision3 | 50D, 250D, 200T, 500T |
+| Kodak Verita | Verita 200D |
+| Kodak Photo | Portra 160, 400, 800, Ektar 100, Gold 200, Ultramax 400 |
+| Fujifilm Photo | Pro 400H, C200, Xtra 400 |
+
+Prints: Kodak 2383, 2393, Portra Endura, Endura Premier, Supra Endura, Ultra Endura, Ektacolor Edge, Fujifilm Crystal Archive.
+
+Vision2 and Vision1 are not in the list yet: the stock data we use has no measurements for them, and we don't invent data under a real stock name. They can be added from Kodak's published datasheets (see the roadmap).
+
+### MC Film Negative controls
 
 | Control | What it does |
 |---|---|
-| Exposure | Camera exposure onto the negative, in stops |
-| Scene Temp / Scene Tint | White balance of the scene *before* the film, in mireds (+ warmer) and towards magenta (+) or green (−). Unlike printer lights, it changes how the film itself is exposed. |
-| Red / Green / Blue Layer Contrast | Development gamma per dye layer: the film crossover. 18% grey stays neutral, while shadows and highlights shift in opposite directions. |
-| Push Pull | Development in stops. Push is fitted to measured push-processed Portra 800 (gamma ×1.20 at +1, ×1.31 at +2). Pull is the inverse. |
-| Negative Contrast | Development gamma around 18% grey. The stock's toe and shoulder are kept. |
-| Dye Crossover: Midtone Position, Midtone Hold, Shadow / Highlight / Offset Cyan, Magenta, Yellow | Per-layer exposure shifts in smooth shadow and highlight zones around the midtone, named by the print result (+ Cyan = a more cyan print). Applied before development, so a grey ramp can never reverse. |
-| Dye Saturation: Hue Twist, Chroma Rolloff, Vibrance, Richness, Highlight Desaturation | Shapes the colour of the exposure before development: rotation about the neutral axis, a soft limit on strong colours, a boost for weak colours, density build-up in saturated colours, and colour drained from highlights. Greys stay unchanged. |
-| Print Exposure | Printer light on all channels, in points (about 12 points = 1 stop) |
-| Printer Red / Green / Blue | Lab timing in points. More red light means more cyan, so the print goes cooler. |
+| Stock Category + Kodak Vision3 / Kodak Verita / Kodak Photo / Fujifilm Photo | The negative. Only the list of the chosen category counts. |
+| Exposure, Push Pull | Camera exposure in stops; development (push fitted to measured Portra 800 push-processing, pull is the inverse) |
+| Scene Temp / Scene Tint | White balance of the scene before the film, in mireds and towards magenta (+) / green (−) |
+| Red / Green / Blue Layer Contrast | Development gamma per dye layer: the film crossover |
+| **Negative Contrast:** Contrast Preset | None (Stock) / Soft / Natural / Punchy / Hard: a starting point; the sliders act on top of it |
+| Contrast | Development gamma around 18% grey, × the preset's |
+| Open Close | + flattens shadows and highlights (more latitude), − steepens them; 18% grey stays |
+| Shadow Roll, Black Depth | Stops below grey where the shadows roll off, and how many stops they still have after it (12 = off) |
+| Highlight Roll, Highlight Latitude | Stops above grey where the highlights roll off, and how many stops they still have after it (12 = off) |
+| Black Anchor, White Anchor | Moves the print's black and white ends (+ deeper blacks / brighter whites) |
+| Base Fog | Flashes the negative with a little even light: lifted, milky blacks |
+| Show Curve | Draws the negative's curves (red, green, blue layers, the stock's own curve in grey) in the top left of the frame |
+| **Dye Crossover:** Midtone Position, Midtone Hold, Shadow / Highlight / Offset Cyan, Magenta, Yellow | Per-layer exposure shifts in shadow and highlight zones, named by the print result |
+| **Dye Saturation:** Color Response | Colour separation at exposure (1 = the stock, 0 = black and white) |
+| Hue Twist, Chroma Rolloff, Vibrance, Richness, Highlight Desaturation | Rotation about the neutral axis, a soft limit on strong colours, a boost for weak colours, density in saturated colours, colour drained from highlights |
+| Color Weight | How Color Response changes brightness: 1 spreads the layers evenly (as measured), 0 weights them by how much each drives the print brightness, so saturation changes brightness less (about a third less on Kodak stocks) |
+| Rendering | Natural (the stock) or Vivid (more separation and dye density) |
+| Gamut Compress Input, Input Encoding, Bypass | As before: DWG (default), ACEScct, Scene Linear Rec709, Rec709 Gamma 2.4 |
+
+All Negative Contrast controls keep 18% grey exactly where it is, so the print stays timed, and none of them can make a grey ramp reverse.
+
+### MC Film Print controls
+
+| Control | What it does |
+|---|---|
+| Input | Negative Cineon Log (from MC Film Negative), or a Print Only input: DWG, ACEScct, Scene Linear, Rec709 |
+| Negative Stock | The negative being printed (same as on MC Film Negative). Not used for Print Only. |
+| Print Stock, White Point (D65 / D60 / D55) | The print, and the white it is rendered at |
+| Print Exposure, Printer Red / Green / Blue | Printer lights in points (about 12 points = 1 stop). More red light = a cooler print. |
 | Print Contrast | Print development gamma around 18% grey |
-| Film Saturation | Colour separation at exposure onto the negative. 1 is the stock as measured, 0 is black and white. Greys are never changed. |
-| Bleach Bypass | Off / Authentic / Grunge. Skip-bleach processing, modelled as retained metallic silver: a spectrally flat density that follows the dye density. |
-| Bleach Stage | Print gives desaturated colour, deep blacks and a harder print. Negative gives harder, blown-out highlights. |
-| Bleach Strength / Silver Contrast | How much silver is kept, and how strongly it piles into the dense parts |
-| Bleach Keeps Mid Grey | Re-times the print so 18% grey keeps its brightness: exact for the negative, within about 1/10 stop for the print |
-| Gamut Compress Input | Softly brings colours outside Rec.709 inside before exposure, instead of clipping them |
-| Bypass | Return the input unchanged |
-| Input Encoding | DaVinci WG Intermediate (default), ACES AP1 ACEScct, Scene Linear Rec709, Rec709 Gamma 2.4, or Negative Cineon Log (prints a negative from another MC Film Core node) |
-| Negative Stock / Print Stock | The stocks above |
-| White Point | D65 / D60 / D55: the white the projected print is rendered at |
-| Output | Rec709 Gamma 2.4 or 2.2, sRGB, P3 D65 Gamma 2.6, Rec2020 Gamma 2.4, DaVinci WG Intermediate (the print kept in DWG, see below), or Negative Cineon Log (the developed negative, for film effects, a second MC Film Core node or a print LUT) |
+| Bleach Bypass, Bleach Stage, Bleach Strength, Silver Contrast, Bleach Keeps Mid Grey | Skip-bleach at the print or the negative, as retained silver |
+| Output | Rec709 Gamma 2.4 / 2.2, sRGB, P3 D65 Gamma 2.6, Rec2020 Gamma 2.4, DaVinci WG Intermediate |
 
-**Node placement.** The node's output is the projected print, which is display-referred, like a print LUT. Put it last, after your grade, and set Output to match your monitoring. With DaVinci Wide Gamut colour management, set the timeline output so it doesn't apply a second display transform, or use a CST after the node.
+**Print Only** prints through an ideal negative: each channel exposes one print layer through a straight-line negative with the average printing contrast of the Vision3 stocks, with no colour crosstalk and no toe or shoulder. 18% grey prints neutral at the same level as through a real negative.
 
-**Chaining with other DCTLs: three ways to use it**
-
-```
-A. One node (display out)
-   [grade] -> [MC Film Core  Output: Rec709 Gamma 2.4]
-
-B. DWG out, for effects that act on the finished print (mist, vignette, gate, weave)
-   [grade] -> [MC Film Core  Output: DaVinci WG Intermediate] -> [DWG effects]
-           -> [CST  DWG/DI -> Rec.709 Gamma 2.4, tone mapping None, gamut mapping None]
-
-C. Split negative / print, for effects that live on the film (grain per dye layer, halation)
-   [grade] -> [MC Film Core  Output: Negative Cineon Log] -> [film effects on the negative]
-           -> [MC Film Core  Input: Negative Cineon Log, same Negative Stock] -> display or DWG
-```
-
-- **B** is exact: the DWG output plus that CST reproduces the Rec709 output to within 1e-6.
-- **C** with no effects in between gives the same result as A, to within 1e-6, bleach bypass included. Set Bleach Bypass on the second (printing) node; the Cineon negative carries the dye densities only.
-- C is also how the OFX plugin will be organised internally.
-
-**Install.** Copy the `.dctl` to `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\LUT` (macOS: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/LUT`). Then use **Project Settings › Color Management › Update Lists**, and pick it under **ResolveFX Color › DCTL**.
-
-`docs/chart.png` shows a synthetic test chart through seven stock pairs. `docs/features.png` shows the bleach bypass modes, Film Saturation, Dye Crossover and Dye Saturation.
+**Install.** Copy the `.dctl` files to `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\LUT` (macOS: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/LUT`), then **Project Settings › Color Management › Update Lists**, and pick them under **ResolveFX Color › DCTL**.
 
 ### Tests
 
-`python3 tests/test_film_core.py` compiles the real generated `.dctl` (as C++11 and C99, warnings as errors) and checks it against the Python reference model in `tools/mcfilm_model.py`. It checks:
+`python3 tests/test_film_core.py` and `python3 tests/test_film_split.py` compile the real generated DCTLs (as C++11 and C99, warnings as errors) and check them against the Python reference model in `tools/mcfilm_model.py`. They check:
+- Negative → Print equals Core, for every stock in every category.
+- The Negative Contrast controls never move 18% grey and never reverse a grey ramp; every control acts in the right direction.
+- Print Only prints 18% grey neutral on every print stock.
 - 18% grey prints neutral for every pair.
 - Grey ramps are monotonic over 16 stops.
 - Hue sweeps are continuous.
@@ -93,22 +121,15 @@ python3 tools/build_dctl.py --profiles <spektrafilm>/src/spektrafilm/data/profil
 python3 tools/build_dctl.py          # regenerate the DCTL from data/mcfilm_tables.json
 ```
 
-Edit `src/MC_Film-Core.dctl.in`, never the generated `.dctl`.
+Edit `src/MC_Film-Core.dctl.in` (one template for Core, Negative and Print), never the generated `.dctl` files.
 
 ---
 
-## MC Film Grain v0.2 and MC Film Halation v0.6
+## MC Film Grain v0.3 and MC Film Halation v0.6
 
-The full film chain in Resolve:
+They sit in the full film chain shown above (Halation before MC Film Negative, Grain between Negative and Print). Use the same Negative Stock on Negative, Grain and Print, and the same Gauge on Grain and Halation. `docs/film_look.png` shows this chain on 250D → 2383 for Super 35, Super 16 and Super 8.
 
-```
-[grade, DWG] -> [MC Film Halation] -> [MC Film Core  Output: Negative Cineon Log]
-             -> [MC Film Grain]     -> [MC Film Core  Input: Negative Cineon Log] -> display (or DWG)
-```
-
-Use the same Negative Stock on all Core and Grain nodes, and the same Gauge on Grain and Halation. `docs/film_look.png` shows this chain on 250D → 2383 for Super 35, Super 16 and Super 8.
-
-### MC Film Grain (`MC_Film-Grain-v0.2.dctl`), on the Cineon negative
+### MC Film Grain (`MC_Film-Grain-v0.3.dctl`), on the Cineon negative
 - **Grain model:** each dye layer is a field of real, randomly placed grains, not interpolated noise. It has no lattice, no grid pattern and an exactly known variance.
 - **Calibration:** strength follows the stock's RMS granularity, scaled with Selwyn's law to the grain size. It grows with the square root of density. Granularity figures are approximate datasheet-class values per stock.
 - **Gauge:** 8mm / Super 8 / 16mm / Super 16 / Super 35 / 65mm, together with the timeline width, sets grain size and strength on screen.
@@ -150,7 +171,8 @@ The full feature-by-feature status is in `docs/FEATURES.md`.
 - ~~Film Sat~~ (done in Core v0.2), Tone Core, Curves
 - Palette (harmoniser)
 - Balance (skin-driven white balance and exposure; reuses the MC Skin Guard qualifier)
-- Negative Designer (edit a stock's curves, layer response and dyes)
+- ~~Negative Contrast~~ (done in v0.6). Next: editing a stock's layer response and dyes.
+- Vision2 / Vision1 stocks, digitised from Kodak's published datasheets.
 - Vignette, test-chart generator
 - Already done: Hue → MC HSL Editor, Skin Tone → MC Skin Guard
 

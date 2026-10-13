@@ -73,7 +73,28 @@ NEGATIVES = [
     ("NEG_PRO400H",   "Fujifilm Pro 400H",   "fujifilm_pro_400h"),
     ("NEG_C200",      "Fujifilm C200",       "fujifilm_c200"),
     ("NEG_XTRA400",   "Fujifilm Xtra 400",   "fujifilm_xtra_400"),
+    ("NEG_VERITA200D", "Kodak Verita 200D",  "kodak_verita_200d"),
 ]
+# Stock Category combo of MC Film Negative: (enum, name, combo label, stocks).
+# Vision2 / Vision1 need measured data that is not available yet.
+NEG_CATEGORIES = [
+    ("CAT_VISION3", "Kodak Vision3",  "Kodak Vision3",
+     ["NEG_V3_50D", "NEG_V3_250D", "NEG_V3_200T", "NEG_V3_500T"]),
+    ("CAT_VERITA",  "Kodak Verita",   "Kodak Verita", ["NEG_VERITA200D"]),
+    ("CAT_KPHOTO",  "Kodak Photo",    "Kodak Photo",
+     ["NEG_PORTRA160", "NEG_PORTRA400", "NEG_PORTRA800", "NEG_EKTAR100", "NEG_GOLD200", "NEG_UMAX400"]),
+    ("CAT_FPHOTO",  "Fujifilm Photo", "Fujifilm Photo", ["NEG_PRO400H", "NEG_C200", "NEG_XTRA400"]),
+]
+# Contrast Preset of the Negative Contrast section: (enum, name, contrast,
+# open / close, shadow roll, highlight roll).  Sliders act on top of it.
+TONE_PRESETS = [
+    ("TP_NONE",    "None (Stock)", 1.00,  0.0, 12.0, 12.0),
+    ("TP_SOFT",    "Soft",         0.88,  0.3,  4.5,  4.0),
+    ("TP_NATURAL", "Natural",      1.00,  0.1,  5.5,  5.0),
+    ("TP_PUNCHY",  "Punchy",       1.15, -0.2,  5.0,  4.5),
+    ("TP_HARD",    "Hard",         1.30, -0.4,  4.0,  4.0),
+]
+RENDERINGS = [("RD_NATURAL", "Natural"), ("RD_VIVID", "Vivid")]
 PRINTS = [
     ("PRT_2383",      "Kodak 2383",                 "kodak_2383"),
     ("PRT_2393",      "Kodak 2393",                 "kodak_2393"),
@@ -107,6 +128,15 @@ INPUTS = [
     ("IN_LINEAR",   "Scene Linear Rec709"),
     ("IN_709",      "Rec709 Gamma 2.4"),
     ("IN_CINEON",   "Negative Cineon Log"),
+]
+# MC Film Print: the negative from MC Film Negative, or a scene (print only,
+# through an ideal negative)
+PRINT_INPUTS = [
+    ("PI_CINEON",   "Negative Cineon Log"),
+    ("PI_DWG",      "DaVinci WG Intermediate (Print Only)"),
+    ("PI_ACESCCT",  "ACES AP1 ACEScct (Print Only)"),
+    ("PI_LINEAR",   "Scene Linear Rec709 (Print Only)"),
+    ("PI_709",      "Rec709 Gamma 2.4 (Print Only)"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -431,24 +461,107 @@ def dye_active(p):
     return any(p[k] != DYE_DEFAULTS[k] for k in DYE_DEFAULTS if k != "mid_pos") or False
 
 
-def negative_density(rgb_lin, neg, exposure_stops, gamma, film_sat=1.0, layer_gamma=(1.0, 1.0, 1.0), dye=None):
+# ---------------------------------------------------------------------------
+#  Negative Contrast section (tone shaping of the negative)
+#  On each layer's exposure in stops relative to 18 % grey, s, before the
+#  development gamma; 18 % grey (s = 0) never moves, so the print stays timed:
+#    Base Fog      s <- log2((2^s + F) / (1 + F)), F = fog x FOG_SCALE: a
+#                  flash of light that lifts the shadows of the negative
+#    Open / Close  s <- s (1 - o OPEN_AMOUNT (1 - exp(-(s / OPEN_WIDTH)^2))):
+#                  + flattens shadows and highlights (more latitude), - steepens
+#    Shadow Roll   below -r stops the shadows roll off into at most Black
+#                  Depth more stops:  s <- -r - D (1 - exp((s + r) / D))
+#    Highlight Roll above r stops the highlights roll off into at most
+#                  Highlight Latitude more stops
+#  then, on the developed density d of each layer, around its 18 % grey
+#  density dm:
+#    Black / White Anchor  d <- d - A b S((dm - d) / R) + A w S((d - dm) / R)
+#                  (+ Black = deeper print blacks, + White = brighter whites)
+#  All steps are increasing, so a grey ramp can never reverse.
+# ---------------------------------------------------------------------------
+ROLL_OFF = 12.0                   # a roll at 12 stops (slider maximum) is off
+OPEN_AMOUNT = 0.5
+OPEN_WIDTH = 3.0                  # stops
+FOG_SCALE = 0.1                   # Base Fog 1 = a flash of 10 % of 18 % grey
+ANCHOR_DENSITY = 0.15             # density at Anchor +-1
+ANCHOR_RANGE = 0.6                # density over which the anchors fade in
+COLOR_WEIGHTS = (0.35, 0.53, 0.12)  # how much each layer drives the print's brightness
+                                    # (d log Y / d density at 18 % grey, Kodak stocks on 2383)
+VIVID_SAT = 1.15                  # Rendering Vivid: Color Response x, Richness +, Vibrance +
+VIVID_RICHNESS = 0.2
+VIVID_VIBRANCE = 0.1
+
+TONE_DEFAULTS = dict(preset=0, contrast=1.0, open=0.0, shadow_roll=ROLL_OFF, black_depth=3.0,
+                     highlight_roll=ROLL_OFF, latitude=3.0, black_anchor=0.0, white_anchor=0.0, fog=0.0)
+
+
+def tone_effective(tone):
+    """Preset + sliders -> (contrast, open, shadow roll, depth, highlight roll,
+    latitude, black anchor, white anchor, fog).  Mirror of the DCTL."""
+    t = dict(TONE_DEFAULTS, **(tone or {}))
+    _, _, pc, po, psr, phr = TONE_PRESETS[int(t["preset"])]
+    return (pc * t["contrast"], min(max(po + t["open"], -1.0), 1.0), min(psr, t["shadow_roll"]),
+            t["black_depth"], min(phr, t["highlight_roll"]), t["latitude"],
+            t["black_anchor"], t["white_anchor"], t["fog"])
+
+
+def tone_stops(s, te):
+    _, o, sr, dep, hr, lat, _, _, fog = te
+    if fog > 0.0:
+        f = fog * FOG_SCALE
+        s = math.log2((2.0 ** s + f) / (1.0 + f))
+    if o != 0.0:
+        s = s * (1.0 - o * OPEN_AMOUNT * (1.0 - math.exp(-(s / OPEN_WIDTH) ** 2)))
+    if sr < ROLL_OFF and s < -sr:
+        s = -sr - dep * (1.0 - math.exp((s + sr) / dep))
+    if hr < ROLL_OFF and s > hr:
+        s = hr + lat * (1.0 - math.exp(-(s - hr) / lat))
+    return s
+
+
+def tone_shapes_exposure(te):
+    return te[1] != 0.0 or te[2] < ROLL_OFF or te[4] < ROLL_OFF or te[8] > 0.0
+
+
+def anchor(d, dm, te):
+    b, w = te[6], te[7]
+    if b == 0.0 and w == 0.0:
+        return d
+    return d - ANCHOR_DENSITY * b * _smooth01((dm - d) / ANCHOR_RANGE) + \
+        ANCHOR_DENSITY * w * _smooth01((d - dm) / ANCHOR_RANGE)
+
+
+
+
+def negative_density(rgb_lin, neg, exposure_stops, gamma, film_sat=1.0, layer_gamma=(1.0, 1.0, 1.0), dye=None,
+                     tone=None, color_weight=1.0):
     """Development gamma acts on log exposure around the 18 % grey exposure of
     each layer, so the stock's own toe and shoulder still bound the result and
     18 % grey keeps its density (the print stays timed).
 
     Film saturation scales how far the three layer exposures (relative to
-    their 18 % grey exposures) spread around their mean: a grey has no spread
-    and is untouched, 0 makes every colour a grey of the same exposure."""
+    their 18 % grey exposures) spread around their (Color Weight) centre: a
+    grey has no spread and is untouched, 0 makes every colour a grey."""
     raw = neg["matrix"] @ rgb_lin
     e = np.array([math.log10(max(raw[k], 1e-10)) + exposure_stops * LOG10_2 - neg["loge_mid"][k]
                   for k in range(3)])
     if film_sat != 1.0:
-        mean = e.mean()
+        # Color Weight sets the centre the layers are spread around: 1 = the
+        # plain mean, 0 = weighted by how much each layer drives the print's
+        # brightness, so the brightness of a colour changes less
+        w = color_weight / 3.0 + (1.0 - color_weight) * np.array(COLOR_WEIGHTS)
+        mean = float(w @ e)
         e = mean + film_sat * (e - mean)
     if dye is not None and dye_active(dye):
         e = dye_shape(e, dye)
-    return np.array([curve_eval(neg["curves"][:, k], neg["loge_mid"][k] + gamma * layer_gamma[k] * e[k],
-                                NEG_LOGE_MIN, NEG_LOGE_MAX) for k in range(3)])
+    te = tone if tone is not None else None
+    if te is not None and tone_shapes_exposure(te):
+        e = np.array([tone_stops(v / LOG10_2, te) * LOG10_2 for v in e])
+    d = np.array([curve_eval(neg["curves"][:, k], neg["loge_mid"][k] + gamma * layer_gamma[k] * e[k],
+                             NEG_LOGE_MIN, NEG_LOGE_MAX) for k in range(3)])
+    if te is not None and "d_mid" in neg:
+        d = np.array([anchor(d[k], neg["d_mid"][k], te) for k in range(3)])
+    return d
 
 
 def print_log_exposure(dens, neg, prt, lamp):
@@ -693,12 +806,24 @@ def render_pixel(rgb, tables, neg_i=1, prt_i=0, encoding="IN_DWG", output="OUT_7
                  exposure=0.0, push=0.0, printer=(0.0, 0.0, 0.0), print_exposure=0.0,
                  neg_contrast=1.0, print_contrast=1.0, gamut=True, film_sat=1.0,
                  bleach="off", bleach_stage="print", bleach_strength=0.7, silver_contrast=1.0,
-                 preserve_mid=True, white=0, temp=0.0, tint=0.0, layer_gamma=(1.0, 1.0, 1.0), dye=None):
-    """Mirror of the DCTL's transform()."""
+                 preserve_mid=True, white=0, temp=0.0, tint=0.0, layer_gamma=(1.0, 1.0, 1.0), dye=None,
+                 tone=None, color_weight=1.0, rendering="natural"):
+    """Mirror of the DCTLs' transform().  neg_i=None is print only: the scene
+    is printed through the ideal negative (MC Film Print, scene input)."""
     if "lampsens" not in tables["prints"][0]:
         prepare(tables)
-    neg = tables["negs"][neg_i]
     prt = tables["prints"][prt_i]
+    if neg_i is None:
+        return render_print_only(rgb, tables, prt_i, encoding, output, printer, print_exposure, print_contrast,
+                                 gamut, bleach, bleach_stage, bleach_strength, silver_contrast, preserve_mid, white)
+    neg = tables["negs"][neg_i]
+    dye = dict(DYE_DEFAULTS, **(dye or {}))
+    if rendering == "vivid":
+        film_sat *= VIVID_SAT
+        dye["richness"] += VIVID_RICHNESS
+        dye["vibrance"] += VIVID_VIBRANCE
+    te = tone_effective(dict(tone or {}, contrast=1.0))
+    neg_contrast = neg_contrast * te[0]
     kb, eb = BLEACH_MODES[bleach]
     kb *= bleach_strength
     eb *= silver_contrast
@@ -715,7 +840,7 @@ def render_pixel(rgb, tables, neg_i=1, prt_i=0, encoding="IN_DWG", output="OUT_7
             lin = gamut_compress(lin)
         lin = np.maximum(lin, 0.0)
         dens = negative_density(lin, neg, exposure, neg_contrast * push_gamma(push), film_sat, layer_gamma,
-                                dict(DYE_DEFAULTS, **(dye or {})))
+                                dye, te, color_weight)
     if output == "OUT_CINEON":
         return CINEON_BLACK + dens / CINEON_DENSITY_PER_CODE
 
@@ -734,11 +859,70 @@ def render_pixel(rgb, tables, neg_i=1, prt_i=0, encoding="IN_DWG", output="OUT_7
         log_h = log_h - print_bleach_retime(tables["print_d_mid"][neg_i][prt_i],
                                             tables["print_vslope_mid"][neg_i][prt_i],
                                             tables["print_dslope_mid"][neg_i][prt_i], k_prt, eb, print_contrast)
+    return finish_print(log_h, pivot, prt, print_contrast, k_prt, eb, white, output)
+
+
+def finish_print(log_h, pivot, prt, print_contrast, k_prt, eb, white, output):
     pd = print_density(log_h, prt, print_contrast, pivot)
     s_prt = silver_density(pd, k_prt, eb)
     tp = 10.0 ** -(prt["base"] + prt["dyes"] @ pd + s_prt)
     xyz = prt["cats"][white] @ (tp @ prt["viewcmf"])
     return encode_output(XYZ_TO[output] @ xyz, output)
+
+
+# ---------------------------------------------------------------------------
+#  print only: the ideal negative
+#  A scene printed without a film negative: each Rec.709 channel exposes one
+#  print layer through a straight-line negative with the average printing
+#  gamma of the Vision3 stocks, D = Dm + g log10(lin / 0.184), no crosstalk,
+#  no toe or shoulder (the print's own curves bound the result), timed so
+#  18 % grey prints at the aim density like every real negative.
+# ---------------------------------------------------------------------------
+IDEAL_REFERENCE = ("NEG_V3_50D", "NEG_V3_250D", "NEG_V3_200T", "NEG_V3_500T")
+
+
+def ideal_negative(tables):
+    """(printing gamma per print layer, mean dye density of 18 % grey),
+    averaged over the Vision3 stocks printed on 2383."""
+    if "ideal" in tables:
+        return tables["ideal"]
+    if "lampsens" not in tables["prints"][0]:
+        prepare(tables)
+    prt = tables["prints"][0]
+    g, dm = [], []
+    for key in IDEAL_REFERENCE:
+        neg = tables["negs"][[n[0] for n in NEGATIVES].index(key)]
+        def h(stops):
+            dens = negative_density(np.array([MIDGRAY * 2.0 ** stops] * 3), neg, 0.0, 1.0)
+            t = 10.0 ** -(neg["base"] + neg["dyes"] @ dens)
+            return np.log10(t @ prt["lampsens"])
+        g.append(-(h(0.25) - h(-0.25)) / (0.5 * LOG10_2))
+        dm.append(float(np.mean(neg["d_mid"])))
+    tables["ideal"] = (np.mean(g, axis=0), float(np.mean(dm)))
+    return tables["ideal"]
+
+
+def render_print_only(rgb, tables, prt_i, encoding, output, printer, print_exposure, print_contrast, gamut,
+                      bleach, bleach_stage, bleach_strength, silver_contrast, preserve_mid, white):
+    prt = tables["prints"][prt_i]
+    gam, dm = ideal_negative(tables)
+    kb, eb = BLEACH_MODES[bleach]
+    kb *= bleach_strength
+    eb *= silver_contrast
+    k_neg = kb if bleach_stage == "negative" else 0.0
+    k_prt = kb if bleach_stage == "print" else 0.0
+    lin = decode_input(rgb, encoding)
+    if gamut:
+        lin = gamut_compress(lin)
+    e = np.array([math.log10(max(v, 1e-10) / MIDGRAY) for v in lin])
+    dens = dm + gam * e
+    pivot = tables["pivot"][0][prt_i]
+    log_h = pivot - gam * e - silver_density(dens, k_neg, eb) + PRINTER_POINT * (np.array(printer) + print_exposure)
+    if preserve_mid:
+        log_h = log_h + silver_density(np.array([dm] * 3), k_neg, eb)
+        log_h = log_h - print_bleach_retime(tables["print_d_mid"][0][prt_i], tables["print_vslope_mid"][0][prt_i],
+                                            tables["print_dslope_mid"][0][prt_i], k_prt, eb, print_contrast)
+    return finish_print(log_h, pivot, prt, print_contrast, k_prt, eb, white, output)
 
 
 # push / pull, per stop of push: development gamma (on log exposure around

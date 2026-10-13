@@ -3,7 +3,7 @@
 // www.markcaptures.com
 
 // ============================================================================
-//  MC_Film-Grain-v0.2.dctl  -  MC Film Grain (on the negative)
+//  MC_Film-Grain-v0.3.dctl  -  MC Film Grain (on the negative)
 //  ---------------------------------------------------------------------------
 //  Film grain grown in the developed negative, per dye layer, for DaVinci
 //  Resolve Studio.  It works on the Cineon negative between two MC Film Core
@@ -36,7 +36,7 @@
 //  changes: keyframe Grain Seed linearly from 0 on the first frame to the
 //  number of frames on the last for moving grain.
 //
-//  Version : 0.2
+//  Version : 0.3
 //  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
 //            You may use this file for personal and commercial grading work.
 //            You may not redistribute, share, sell, sublicense or publish it,
@@ -62,7 +62,7 @@ DEFINE_UI_TOOLTIP(uiSeed, "Grain pattern number. A DCTL cannot see the frame num
 DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
 
-DEFINE_UI_PARAMS(uiNegative, Negative Stock, DCTLUI_COMBO_BOX, 1, {NEG_V3_50D, NEG_V3_250D, NEG_V3_200T, NEG_V3_500T, NEG_PORTRA160, NEG_PORTRA400, NEG_PORTRA800, NEG_EKTAR100, NEG_GOLD200, NEG_UMAX400, NEG_PRO400H, NEG_C200, NEG_XTRA400}, {Kodak Vision3 50D, Kodak Vision3 250D, Kodak Vision3 200T, Kodak Vision3 500T, Kodak Portra 160, Kodak Portra 400, Kodak Portra 800, Kodak Ektar 100, Kodak Gold 200, Kodak Ultramax 400, Fujifilm Pro 400H, Fujifilm C200, Fujifilm Xtra 400})
+DEFINE_UI_PARAMS(uiNegative, Negative Stock, DCTLUI_COMBO_BOX, 1, {NEG_V3_50D, NEG_V3_250D, NEG_V3_200T, NEG_V3_500T, NEG_PORTRA160, NEG_PORTRA400, NEG_PORTRA800, NEG_EKTAR100, NEG_GOLD200, NEG_UMAX400, NEG_PRO400H, NEG_C200, NEG_XTRA400, NEG_VERITA200D}, {Kodak Vision3 50D, Kodak Vision3 250D, Kodak Vision3 200T, Kodak Vision3 500T, Kodak Portra 160, Kodak Portra 400, Kodak Portra 800, Kodak Ektar 100, Kodak Gold 200, Kodak Ultramax 400, Fujifilm Pro 400H, Fujifilm C200, Fujifilm Xtra 400, Kodak Verita 200D})
 DEFINE_UI_TOOLTIP(uiNegative, "The negative stock, for its granularity. Use the same stock as on the MC Film Core nodes.")
 DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, 4, {GAUGE_8, GAUGE_S8, GAUGE_16, GAUGE_S16, GAUGE_S35, GAUGE_65}, {8mm, Super 8, 16mm, Super 16, Super 35, 65mm})
 DEFINE_UI_TOOLTIP(uiGauge, "Film format. A smaller frame is enlarged more, so its grain is bigger and stronger on screen.")
@@ -89,9 +89,9 @@ DEFINE_UI_TOOLTIP(uiGauge, "Film format. A smaller frame is enlarged more, so it
 __CONSTANT__ float MCG_GAUGE_WIDTH_UM[6] = {
     4800.0f, 5790.0f, 10260.0f, 12520.0f, 24890.0f, 52480.0f
 };
-__CONSTANT__ float MCG_GRANULARITY[13] = {
+__CONSTANT__ float MCG_GRANULARITY[14] = {
     0.005f, 0.006f, 0.006f, 0.008f, 0.004f, 0.0045f, 0.0065f, 0.004f,
-    0.007f, 0.008f, 0.005f, 0.008f, 0.009f
+    0.007f, 0.008f, 0.005f, 0.008f, 0.009f, 0.006f
 };
 
 

@@ -26,11 +26,18 @@ sys.path.insert(0, HERE)
 import mcfilm_model as m  # noqa: E402
 import mcfilm_effects as fx  # noqa: E402
 
-VERSION = "0.5"
+VERSION = "0.6"
 TABLES_JSON = os.path.join(ROOT, "data", "mcfilm_tables.json")
 TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Core.dctl.in")
-OUTPUT = os.path.join(ROOT, "MC_Film-Core-v%s.dctl" % VERSION)
-EFFECTS_VERSION = "0.2"
+# one template, three DCTLs: (role, product, file stem, description)
+ROLES = [("CORE", "MC Film Core", "MC_Film-Core", "negative + print in one node"),
+         ("NEG", "MC Film Negative", "MC_Film-Negative", "scene -> developed negative"),
+         ("PRT", "MC Film Print", "MC_Film-Print", "negative or scene -> projected print")]
+OUTPUTS_BY_ROLE = {r: os.path.join(ROOT, "%s-v%s.dctl" % (stem, VERSION)) for r, _, stem, _ in ROLES}
+OUTPUT = OUTPUTS_BY_ROLE["CORE"]
+NEG_OUTPUT = OUTPUTS_BY_ROLE["NEG"]
+PRT_OUTPUT = OUTPUTS_BY_ROLE["PRT"]
+EFFECTS_VERSION = "0.3"
 GRAIN_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Grain.dctl.in")
 GRAIN_OUTPUT = os.path.join(ROOT, "MC_Film-Grain-v%s.dctl" % EFFECTS_VERSION)
 HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
@@ -71,6 +78,73 @@ def c_array(name, values, per_line=8):
     return "__CONSTANT__ float %s[%d] = {\n%s\n};\n" % (name, len(flat), ",\n".join(lines))
 
 
+def role_filter(src, role):
+    """Keep the lines of `role`: blocks between '//@ ROLE ...' and '//@ END'."""
+    out, keep = [], True
+    for line in src.split("\n"):
+        st = line.strip()
+        if st.startswith("//@ "):
+            words = st[4:].split()
+            keep = True if words == ["END"] else role in words
+            continue
+        if keep:
+            out.append(line)
+    return "\n".join(out)
+
+
+def xover_ui():
+    zones = (("S", "Shadow", "the shadows"), ("H", "Highlight", "the highlights"), ("O", "Offset", "the whole image"))
+    lines = []
+    for z, zname, where in zones:
+        for dye in ("Cyan", "Magenta", "Yellow"):
+            v = "ui%s%s" % (z, dye)
+            lines.append("DEFINE_UI_PARAMS(%s, %s %s, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)" % (v, zname, dye))
+            lines.append('DEFINE_UI_TOOLTIP(%s, "Shifts %s of the print towards %s (+) or away from it (-), by '
+                         'changing the exposure of that dye\'s film layer (+1 = 1/3 stop on that layer).")'
+                         % (v, where, dye.lower()))
+    return "\n".join(lines)
+
+
+def stock_enum(e):
+    return "SK_" + e[4:]
+
+
+def category_ui():
+    neg_names = {e: n for e, n, _ in m.NEGATIVES}
+    lines = []
+    for cat, name, label, stocks in m.NEG_CATEGORIES:
+        var = "uiStock" + cat[4:].title()
+        default = stocks.index("NEG_V3_250D") if "NEG_V3_250D" in stocks else 0
+        lines.append("DEFINE_UI_PARAMS(%s, %s, DCTLUI_COMBO_BOX, %d, {%s}, {%s})" % (
+            var, label, default, ", ".join(stock_enum(s) for s in stocks),
+            ", ".join(neg_names[s] for s in stocks)))
+        lines.append('DEFINE_UI_TOOLTIP(%s, "The %s negative the scene is exposed onto (used when Stock Category '
+                     'is %s).")' % (var, name, name))
+    return "\n".join(lines)
+
+
+def role_tables(t, role):
+    gam, dm = m.ideal_negative(t)
+    out = c_array("MCF_IDEAL_GAMMA", gam)
+    out += "#define MCF_IDEAL_D_MID %.9gf\n" % dm
+    out += c_array("MCF_TONE_PRESET", [p[2:] for p in m.TONE_PRESETS])
+    index = {e: i for i, (e, _, _) in enumerate(m.NEGATIVES)}
+    flat = [index[s] for _, _, _, st in m.NEG_CATEGORIES for s in st]
+    out += "__CONSTANT__ int MCF_CAT_STOCK[%d] = { %s };\n\n" % (len(flat), ", ".join(map(str, flat)))
+    args = ", ".join("int s%d" % i for i in range(len(m.NEG_CATEGORIES)))
+    out += "// Stock Category + that category's stock combo -> negative index.\n"
+    out += "__DEVICE__ int McfCategoryStock(int cat, %s)\n{\n" % args
+    off = 0
+    for i, (_, _, _, st) in enumerate(m.NEG_CATEGORIES):
+        out += "    if (cat == %d) return MCF_CAT_STOCK[%d + s%d];\n" % (i, off, i)
+        off += len(st)
+    out += "    return MCF_CAT_STOCK[%d + s0];\n}\n" % 0
+    if role == "NEG":
+        out += "\n// Output encodings (used by shared code; this node always outputs Cineon).\n"
+        out += "".join("#define %s %d\n" % (e, i) for i, (e, _) in enumerate(m.OUTPUTS))
+    return out
+
+
 def derived(t):
     """The pre-multiplied tables the DCTL uses (computed by the model)."""
     m.prepare(t)
@@ -78,8 +152,10 @@ def derived(t):
             np.array([p["viewcmf"] for p in t["prints"]]))
 
 
-def generate(t):
+def generate(t, role="CORE"):
     lampsens, viewcmf = derived(t)
+    _, product, stem, role_text = [r for r in ROLES if r[0] == role][0]
+    output = OUTPUTS_BY_ROLE[role]
     negs, prts = t["negs"], t["prints"]
     tables = DATA_NOTICE % m.CURVE_N + "\n"
     tables += "#define MCF_NNEG %d\n#define MCF_NPRT %d\n\n" % (len(negs), len(prts))
@@ -102,10 +178,34 @@ def generate(t):
     tables += c_array("MCF_PRT_VSLOPE_MID", t["print_vslope_mid"])
     tables += c_array("MCF_PRT_DSLOPE_MID", t["print_dslope_mid"])
 
-    src = open(TEMPLATE, encoding="utf-8").read()
+    src = role_filter(open(TEMPLATE, encoding="utf-8").read(), role)
+    scene_inputs = [x for x in m.INPUTS if x[0] != "IN_CINEON"]
+    prt_outputs = [x for x in m.OUTPUTS if x[0] != "OUT_CINEON"]
     subs = {
         "VERSION": VERSION,
+        "PRODUCT": product,
+        "FILE": os.path.basename(output),
+        "ROLE_TEXT": role_text,
         "TABLES": tables,
+        "ROLE_TABLES": role_tables(t, role),
+        "XOVER_UI": xover_ui(),
+        "CAT_UI": category_ui(),
+        "CAT_ARGS": ", ".join("uiStock" + c[4:].title() for c, _, _, _ in m.NEG_CATEGORIES),
+        "CAT_ENUMS": ", ".join(c for c, _, _, _ in m.NEG_CATEGORIES),
+        "CAT_NAMES": ", ".join(n for _, n, _, _ in m.NEG_CATEGORIES),
+        "SCENE_INPUT_ENUMS": ", ".join(e for e, _ in scene_inputs),
+        "SCENE_INPUT_NAMES": ", ".join(n for _, n in scene_inputs),
+        "PI_ENUMS": ", ".join(e for e, _ in m.PRINT_INPUTS),
+        "PI_NAMES": ", ".join(n for _, n in m.PRINT_INPUTS),
+        "PRT_OUT_ENUMS": ", ".join(e for e, _ in prt_outputs),
+        "PRT_OUT_NAMES": ", ".join(n for _, n in prt_outputs),
+        "RD_ENUMS": ", ".join(e for e, _ in m.RENDERINGS),
+        "RD_NAMES": ", ".join(n for _, n in m.RENDERINGS),
+        "TP_ENUMS": ", ".join(p[0] for p in m.TONE_PRESETS),
+        "TP_NAMES": ", ".join(p[1] for p in m.TONE_PRESETS),
+        "CW_R": repr(m.COLOR_WEIGHTS[0]), "CW_G": repr(m.COLOR_WEIGHTS[1]), "CW_B": repr(m.COLOR_WEIGHTS[2]),
+        **{k: repr(getattr(m, k)) for k in ("ROLL_OFF", "OPEN_AMOUNT", "OPEN_WIDTH", "FOG_SCALE", "ANCHOR_DENSITY",
+                                            "ANCHOR_RANGE", "VIVID_SAT", "VIVID_RICHNESS", "VIVID_VIBRANCE")},
         "INPUT_ENUMS": ", ".join(e for e, _ in m.INPUTS),
         "INPUT_NAMES": ", ".join(n for _, n in m.INPUTS),
         "NEG_ENUMS": ", ".join(e for e, _, _ in m.NEGATIVES),
@@ -138,10 +238,11 @@ def generate(t):
     }
     for k, v in subs.items():
         src = src.replace("@@%s@@" % k, v)
-    assert "@@" not in src, "unreplaced template field"
-    with open(OUTPUT, "w", encoding="utf-8") as f:
+    left = set(__import__("re").findall(r"@@(\w+)@@", src))
+    assert not left, "unreplaced template fields %s" % left
+    with open(output, "w", encoding="utf-8") as f:
         f.write(src)
-    return OUTPUT
+    return output
 
 
 def fill(template, output, subs):
@@ -190,7 +291,7 @@ def main():
         m.save_tables(t, TABLES_JSON)
         print("wrote", TABLES_JSON)
     t = m.load_tables(TABLES_JSON)
-    for out in [generate(t)] + generate_effects():
+    for out in [generate(t, r[0]) for r in ROLES] + generate_effects():
         print("wrote", out, "(%d KB)" % (os.path.getsize(out) // 1024))
 
 

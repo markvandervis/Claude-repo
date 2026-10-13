@@ -7,30 +7,34 @@ Status: ✅ done · 🟡 partly / approximation · ⏳ planned · 🚫 not possi
 ## Input / output
 | Feature | MC Film | Status |
 |---|---|---|
-| Input colour space (DWG, ACEScct, linear, Rec709) | Core · Input Encoding | ✅ |
-| Output Rec709 2.4 / 2.2, sRGB, P3 2.6, Rec2020 | Core · Output | ✅ (2.2 added in v0.4) |
-| Output Cineon (negative out) | Core · Output Negative Cineon Log | ✅ |
-| Output DWG | Core · Output DaVinci WG Intermediate | ✅ |
-| White point D65 / D60 / D55 | Core · White Point | ✅ v0.4 |
+| Input colour space (DWG, ACEScct, linear, Rec709) | Negative / Print · Input Encoding | ✅ |
+| Output Rec709 2.4 / 2.2, sRGB, P3 2.6, Rec2020 | Negative / Print · Output | ✅ (2.2 added in v0.4) |
+| Output Cineon (negative out) | Negative / Print · Output Negative Cineon Log | ✅ |
+| Output DWG | Negative / Print · Output DaVinci WG Intermediate | ✅ |
+| White point D65 / D60 / D55 | Negative / Print · White Point | ✅ v0.4 |
 | Presets / Looks | OFX preset browser; meanwhile Resolve PowerGrades | ⏳ OFX |
 | Export LUT (.cube) | Offline export tool from the reference model, then in OFX. Exported LUTs carry the CC BY-SA stock-data notice. | ⏳ |
 
 ## Negative
 | Feature | MC Film | Status |
 |---|---|---|
-| Film stock library | Core · 13 negatives from measured data | ✅ |
+| Film stock library | Negative · 14 negatives from measured data, in Stock Categories (Kodak Vision3, Kodak Verita, Kodak Photo, Fujifilm Photo) | ✅ v0.6 |
+| Vision2 / Vision1 | Needs measured data: to be digitised from Kodak's published datasheets | ⏳ |
 | Film format 8mm / Super 8 / 16 / Super 16 / 35 / 65 | Grain + Halation · Gauge (gauge presets: docs/PRESETS.md) | ✅ |
 | Film speed / Auto (stock) | Grain uses each stock's granularity, which is "Auto". A manual speed override goes into Grain. | 🟡 |
 | Strength (mix) | OFX global mix. In DCTL, use node Key Output gain. | ⏳ |
+| Print only (a print stock without a negative) | Print · Print Only inputs, through an ideal negative | ✅ v0.6 |
 | Exposure, Push / Pull | Core | ✅ |
 | Scene Temp / Tint | Core v0.4 | ✅ |
-| Negative saturation | Core · Film Saturation | ✅ |
-| Rendering Natural / Vivid | Film Saturation covers it; a "Vivid" preset value in OFX | 🟡 |
-| Contrast / contrast presets | Core · Negative Contrast; presets in OFX | 🟡 |
+| Negative saturation | Negative · Color Response | ✅ |
+| Rendering Natural / Vivid | Negative · Rendering | ✅ v0.6 |
+| Contrast / contrast presets | Negative · Contrast Preset (None, Soft, Natural, Punchy, Hard) + Contrast | ✅ v0.6 |
 | Layer gammas / dye crossover | Core v0.4 · Red / Green / Blue Layer Contrast | ✅ |
-| Open / Close, Shadow & Highlight roll, Black / White anchor, Highlight latitude, Black depth, Base fog | **Negative Designer**: reshaping the stock's curves (toe, shoulder, latitude, fog) | ⏳ next |
+| Open / Close, Shadow & Highlight roll, Black / White anchor, Highlight latitude, Black depth, Base fog | Negative · Negative Contrast section | ✅ v0.6 |
+| Show Curve | Negative · Show Curve (curves drawn over the frame) | ✅ v0.6 |
+| Preview Neutral, Dye Crossover Show Curves | Planned | ⏳ |
 | Dye crossover: midtone position / hold, shadow / highlight / offset C M Y | Core v0.5 · Dye Crossover | ✅ |
-| Dye saturation: colour response, hue twist, chroma rolloff, vibrance, richness, highlight desaturation | Core v0.5 · Film Saturation + Dye Saturation | ✅ |
+| Dye saturation: colour response, hue twist, chroma rolloff, colour weight, vibrance, richness, highlight desaturation | Negative · Dye Saturation | ✅ v0.6 |
 | Save / load custom stocks (My Stocks) | OFX: stock files (JSON) in a user folder | ⏳ OFX |
 
 ## Print
