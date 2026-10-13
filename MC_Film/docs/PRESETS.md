@@ -1,14 +1,14 @@
 # MC Film: gauge presets
 
-## Halation per gauge (MC Film Halation v0.4)
+## Halation per gauge (MC Film Halation v0.5)
 
 **From v0.3 these presets are automatic.** In **Size Mode: Matched** (the default), switching **Gauge** gives the behaviour below by itself:
 - the glow keeps about the same size on screen and grows slightly on smaller gauges,
-- it gets **stronger** on smaller gauges: Halation and Bloom scale with the enlargement to the power 0.6, so 16mm 1.7×, Super 8 2.4× and 8mm 2.7× the 35mm glow (measured from halation-only screenshots of the same tubes on all four gauges),
+- it gets **stronger** on smaller gauges: Halation Amount scales with the enlargement to the power 0.6, so 16mm 1.7×, Super 8 2.4× and 8mm 2.7× the 35mm glow (measured from halation-only screenshots of the same tubes on all four gauges),
 - and slightly warmer on smaller gauges,
 - **Bloom** (default 0.25) adds the neutral emulsion scatter that makes the glow warm-white instead of deep red.
 
-Defaults: Halation Amount 0.25, Halation Size 1.0, Halation Colour 0.6, Bloom 0.25, Quality Best 128. Use Ultra 256 for the final render.
+Defaults: Halation Amount 0.25, Halation Size 1.0, Halation Colour 0.6, Bloom 0.25, Highlight Threshold 2.0, Quality Best 128. Bloom is not scaled by the gauge (v0.5). Use Ultra 256 for the final render.
 
 The table gives the equivalent **Physical**-mode settings (the halo fixed on the film), which are the same presets written out by hand. They were calibrated by measuring the glow around a fluorescent tube in matched reference screenshots (strength 20 at 8mm, Super 8, 16mm and 35mm), then simulating the same tube through MC Film Halation and MC Film Core (250D → 2383) at 1920 px:
 

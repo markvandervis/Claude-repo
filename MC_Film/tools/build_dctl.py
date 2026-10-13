@@ -34,7 +34,7 @@ EFFECTS_VERSION = "0.2"
 GRAIN_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Grain.dctl.in")
 GRAIN_OUTPUT = os.path.join(ROOT, "MC_Film-Grain-v%s.dctl" % EFFECTS_VERSION)
 HALO_TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Halation.dctl.in")
-HALO_VERSION = "0.4"
+HALO_VERSION = "0.5"
 HALO_OUTPUT = os.path.join(ROOT, "MC_Film-Halation-v%s.dctl" % HALO_VERSION)
 
 DATA_NOTICE = """\

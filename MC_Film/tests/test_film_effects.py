@@ -13,7 +13,7 @@ and checks them against tools/mcfilm_effects.py and against what they claim:
               smaller gauges; Grain Colour 0 / 1 = shared / independent layers;
               seeds; sub-pixel grain follows Selwyn's law; finite output;
               the full chain Core -> Grain -> Core.
-  halation  - off is bit exact; DCTL == reference; an even field is untouched;
+  halation  - off is bit exact; DCTL == reference; an even field is untouched; nothing darkens;
               red light is redistributed, not added; the halo is red-orange,
               blue untouched; halo size follows the gauge; the threshold.
 
@@ -229,7 +229,7 @@ def test_halation():
 
     for q, mode, bloom in ((0, 0, 0.25), (1, 1, 0.0), (2, 0, 0.6)):
         a = run("fx_halation", fr, w, h, uiQuality=q, uiHalAmount=0.4, uiHalSize=1.5, uiGauge=G16,
-                uiHalColour=0.5, uiBloom=bloom, uiSizeMode=mode)
+                uiHalColour=0.5, uiBloom=bloom, uiSizeMode=mode, uiHalThreshold=0.0)
         b = np.array(fx.halation_frame(fr, w, h, 0.4, 1.5, 0.5, 0.0, G16, q, bloom, mode == 0)).reshape(h, w, 3)
         check(np.abs(a - b).max() < 2e-5, "DCTL == reference (quality %d, %s, bloom %.2f: %.1e)" %
               (q, ("Matched", "Physical")[mode], bloom, np.abs(a - b).max()))
@@ -253,11 +253,19 @@ def test_halation():
     check(np.array_equal(o[..., 2], np.array(fr).reshape(H, W, 3)[..., 2]), "with Bloom 0, blue is untouched")
     ob = run("fx_halation", fr, W, H, uiHalAmount=0.3, uiQuality=2, uiGauge=G16, uiBloom=0.5, uiSizeMode=1)
     db = np.vectorize(fx.di_decode)(ob) - lin_in
-    check(db[..., 2][halo].mean() > 0.02 and abs(np.vectorize(fx.di_decode)(ob)[..., 2].sum() - lin_in[..., 2].sum())
-          / lin_in[..., 2].sum() < 0.02, "Bloom adds a neutral glow (blue too), light still conserved")
-    tot = lin_in[..., 0].sum()
-    check(abs(lin_out[..., 0].sum() - tot) / tot < 0.02, "red light is redistributed, not added (%.2f %%)" %
-          (100 * (lin_out[..., 0].sum() - tot) / tot))
+    check(db[..., 2][halo].mean() > 0.02, "Bloom adds a neutral glow (blue too)")
+    check(np.all(lin_out >= lin_in - 1e-6) and np.all(db >= -1e-6), "the glow only adds light: no channel goes down")
+
+    # regression (v0.4): 8mm Matched at strong settings turned the cores of
+    # lights cyan.  Every pixel must keep R >= G >= B on a neutral light.
+    for g in (G8, S8, G16, S35):
+        o = run("fx_halation", fr, W, H, uiGauge=g, uiSizeMode=0, uiHalAmount=1.0, uiBloom=1.0, uiHalThreshold=0.0)
+        lo = np.vectorize(fx.di_decode)(o)
+        ok = np.all(lo >= lin_in - 1e-6) and np.all(lo[..., 0] >= lo[..., 1] - 1e-6) and \
+            np.all(lo[..., 1] >= lo[..., 2] - 1e-6)
+        core = lo[H // 2, W // 2]
+        check(ok, "%s, Matched, Amount 1, Bloom 1: no cyan cores, nothing darkens (core %.2f %.2f %.2f, input 32)"
+              % (fx.GAUGES[g][1], core[0], core[1], core[2]))
 
     # halo size against gauge: a small point light on a 1024 px frame, where
     # even the Super 35 halo spans several pixels

@@ -3,7 +3,7 @@
 // www.markcaptures.com
 
 // ============================================================================
-//  MC_Film-Halation-v0.4.dctl  -  MC Film Halation
+//  MC_Film-Halation-v0.5.dctl  -  MC Film Halation
 //  ---------------------------------------------------------------------------
 //  Halation for DaVinci Resolve Studio: light that passes through the
 //  emulsion, scatters in the film base and comes back to re-expose the
@@ -15,19 +15,20 @@
 //
 //    [grade] -> [MC Film Halation] -> [MC Film Core] ...
 //
-//  REDISTRIBUTION, NOT ADDITION
-//  On a large even area the light scattered out of a point is replaced by
-//  light scattered in from its neighbours, and that balance is already part
-//  of the stock's measured response.  So the operator only moves light:
+//  A GLOW THAT ONLY ADDS
+//  With D(c) = max(blur(T(c)) - T(c), 0), the light that reaches a pixel from
+//  brighter neighbours beyond what it already has:
 //
-//      R' = R + (a + b) * (blur(T(R)) - T(R))
-//      G' = G + a * colour * max(blur(T(R)) - T(R), 0) + b * (blur(T(G)) - T(G))
-//      B' = B + b * (blur(T(B)) - T(B))
+//      R' = R + (a + b) * D(R)
+//      G' = G + a * colour * D(R) + b * D(G)
+//      B' = B + b * D(B)
 //
 //  a is Halation (base scatter, red layer), b is Bloom (neutral scatter in
-//  the emulsion, irradiation).  An even field is left exactly as it is; near
-//  a bright edge the glow appears and the core gives up a little.  T is an
-//  optional soft highlight threshold (0 = physical, every level scatters).
+//  the emulsion, irradiation), T a soft highlight threshold (default two
+//  stops above 18 % grey).  No channel can ever go down, so the centre of a
+//  light keeps its colour at any setting; an even area (a sky, a wall) is
+//  left as it is, because its own scatter is already part of the stock's
+//  measured response; and everything below the threshold is untouched.
 //
 //  SIZE MODES
 //  Physical: the halo has a fixed size on the film, so a small gauge, which
@@ -35,7 +36,7 @@
 //  glow keeps about the same size on screen across gauges, growing a little
 //  and getting slightly stronger and warmer on small gauges - the behaviour
 //  of the commercial film plugins, calibrated in docs/PRESETS.md: the glow
-//  strength (Halation and Bloom) grows with the enlargement to the power 0.6
+//  Halation strength grows with the enlargement to the power 0.6
 //  (35mm 1x, 16mm 1.7x, Super 8 2.4x, 8mm 2.7x).
 //
 //  THE KERNEL
@@ -46,7 +47,7 @@
 //  golden-angle spiral, all with equal weight, and the spiral is rotated per
 //  pixel so the sampling shows as fine noise instead of rings.
 //
-//  Version : 0.4
+//  Version : 0.5
 //  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
 //            You may use this file for personal and commercial grading work.
 //            You may not redistribute, share, sell, sublicense or publish it,
@@ -66,8 +67,8 @@ DEFINE_UI_PARAMS(uiHalColour, Halation Colour, DCTLUI_SLIDER_FLOAT, 0.6, 0.0, 1.
 DEFINE_UI_TOOLTIP(uiHalColour, "How much of the scattered light also reaches the green layer: 0 is a deep red halo, higher values move it towards orange and yellow.")
 DEFINE_UI_PARAMS(uiBloom, Bloom, DCTLUI_SLIDER_FLOAT, 0.25, 0.0, 1.0, 0.01)
 DEFINE_UI_TOOLTIP(uiBloom, "Neutral light scatter in the emulsion (irradiation), on all three layers: the near-white part of a highlight glow. Together with Halation it gives a warm-white glow.")
-DEFINE_UI_PARAMS(uiHalThreshold, Highlight Threshold, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 6.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHalThreshold, "Stops above 18 % grey below which light does not scatter. 0 is physical (everything scatters, mostly visible at bright edges); raise it to keep the glow on the brightest highlights only.")
+DEFINE_UI_PARAMS(uiHalThreshold, Highlight Threshold, DCTLUI_SLIDER_FLOAT, 2.0, 0.0, 6.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHalThreshold, "Stops above 18 % grey from which light starts to glow (with a soft knee). Everything below is left untouched. Lower it for a glow on more of the image, raise it for the brightest highlights only.")
 
 DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
@@ -260,11 +261,11 @@ __DEVICE__ unsigned int MchHash(unsigned int x)
 // ----------------------------------------------------------------------------
 
 // Soft highlight threshold, in linear light: 0 below `thr`, then rising with
-// a smooth (C1) knee one stop wide into a straight line of slope 1.  thr = 0
-// is the identity.
+// a smooth (C1) knee into a straight line of slope 1.  thr = 0 lets all light
+// glow; negative values (out-of-gamut channels) never glow.
 __DEVICE__ float MchThreshold(float v, float thr)
 {
-    if (thr <= 0.0f) return v;
+    if (thr <= 0.0f) return _fmaxf(v, 0.0f);
     float k = thr;                         // knee width
     float x = v - thr;
     if (x <= 0.0f) return 0.0f;
@@ -272,16 +273,16 @@ __DEVICE__ float MchThreshold(float v, float thr)
     return x * x / (2.0f * k);
 }
 
-// Halation (red layer, a little green) and bloom (all layers) applied to the
-// linear pixel, given the blurred thresholded channels.  Both only move light:
-// an even field, where blur(T) == T, is left exactly as it is.
+// Halation (red layer, a little green) and bloom (all layers) added to the
+// linear pixel, given the blurred thresholded channels.  Only the light
+// arriving from brighter neighbours is added, so nothing ever goes down.
 __DEVICE__ float3 MchHalate(float3 lin, float3 blurred, float amount, float colour, float bloom, float thr)
 {
-    float dr = blurred.x - MchThreshold(lin.x, thr);
-    float dg = blurred.y - MchThreshold(lin.y, thr);
-    float db = blurred.z - MchThreshold(lin.z, thr);
+    float dr = _fmaxf(blurred.x - MchThreshold(lin.x, thr), 0.0f);
+    float dg = _fmaxf(blurred.y - MchThreshold(lin.y, thr), 0.0f);
+    float db = _fmaxf(blurred.z - MchThreshold(lin.z, thr), 0.0f);
     return make_float3(lin.x + (amount + bloom) * dr,
-                       lin.y + amount * colour * _fmaxf(dr, 0.0f) + bloom * dg,
+                       lin.y + amount * colour * dr + bloom * dg,
                        lin.z + bloom * db);
 }
 
@@ -353,10 +354,8 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTU
 
     float3 lin = make_float3(MchDecode(c.x, uiInput), MchDecode(c.y, uiInput), MchDecode(c.z, uiInput));
     float inv = 1.0f / (float)n;
-    float3 blurred = make_float3(sr_ * inv,
-                                 bloomOn ? sg * inv : MchThreshold(lin.y, thr),
-                                 bloomOn ? sb * inv : MchThreshold(lin.z, thr));
-    float3 hal = MchHalate(lin, blurred, amount, colour, uiBloom * strength, thr);
+    float3 blurred = make_float3(sr_ * inv, bloomOn ? sg * inv : 0.0f, bloomOn ? sb * inv : 0.0f);
+    float3 hal = MchHalate(lin, blurred, amount, colour, uiBloom, thr);
     if (hal.x == lin.x && hal.y == lin.y && hal.z == lin.z) return c;   // nothing scattered: bit exact
     return make_float3(hal.x == lin.x ? c.x : MchEncode(hal.x, uiInput),
                        hal.y == lin.y ? c.y : MchEncode(hal.y, uiInput),

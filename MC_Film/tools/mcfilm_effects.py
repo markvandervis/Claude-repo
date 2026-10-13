@@ -171,7 +171,7 @@ def di_encode(x):
 
 def threshold(v, thr):
     if thr <= 0.0:
-        return v
+        return max(v, 0.0)
     x = v - thr
     if x <= 0.0:
         return 0.0
@@ -180,7 +180,7 @@ def threshold(v, thr):
     return x * x / (2.0 * thr)
 
 
-def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, threshold_stops=0.0,
+def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, threshold_stops=2.0,
                    gauge_i=4, quality=1, bloom=0.25, matched=True):
     """frame: row-major list of DWG / DI pixels.  Returns the same encoding."""
     radii, cs, sn = halo_taps()
@@ -193,7 +193,6 @@ def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, thre
         scale = HALO_UM * MATCH_SIZE * size / (ref_um / width) * (ref_um / gauge_um) ** MATCH_GROWTH
         strength = (ref_um / gauge_um) ** MATCH_STRENGTH
         amount = amount * strength
-        bloom = bloom * strength
         colour = max(colour - MATCH_COLOUR * g, 0.0)
     else:
         scale = HALO_UM * size / (gauge_um / width)
@@ -229,9 +228,9 @@ def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, thre
                     n += 1
             l = [di_decode(v) for v in c]
             own = [threshold(v, thr) for v in l]
-            blur = [tot[0] / n, tot[1] / n if bloom > 0.0 else own[1], tot[2] / n if bloom > 0.0 else own[2]]
-            dr, dg, db = blur[0] - own[0], blur[1] - own[1], blur[2] - own[2]
-            new = [l[0] + (amount + bloom) * dr, l[1] + amount * colour * max(dr, 0.0) + bloom * dg,
-                   l[2] + bloom * db]
+            dr = max(tot[0] / n - own[0], 0.0)
+            dg = max(tot[1] / n - own[1], 0.0) if bloom > 0.0 else 0.0
+            db = max(tot[2] / n - own[2], 0.0) if bloom > 0.0 else 0.0
+            new = [l[0] + (amount + bloom) * dr, l[1] + amount * colour * dr + bloom * dg, l[2] + bloom * db]
             out.append(tuple(c[k] if new[k] == l[k] else di_encode(new[k]) for k in range(3)))
     return out
