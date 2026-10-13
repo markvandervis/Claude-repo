@@ -1,0 +1,319 @@
+// MarkCaptures MC Pro Split
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
+
+// ============================================================================
+//  MC_Pro-Split-v0.3.dctl  -  MC Pro Split (RGB split tone, five zones)
+//  ---------------------------------------------------------------------------
+//  An RGB split tone for DaVinci Resolve Studio, part of the MC Film suite:
+//  a red, green and blue offset for each of five tonal zones - Hi, Hi-Mid,
+//  Mid, Lo-Mid and Lo.
+//
+//  HOW IT WORKS
+//  Everything happens on the log code values y of the chosen Transfer
+//  Function (in the image's own gamut), where adding to a channel is an
+//  exposure shift of that channel; Scene Linear is worked on as DaVinci
+//  Intermediate.  With x the pixel's brightness in stops from the Pivot (one
+//  stop = TF(0.36) - TF(0.18) code values, middle grey = TF(0.18)), the
+//  zones are centred at -4, -2, 0, +2 and +4 stops; between two neighbouring
+//  centres their offsets blend with a smoothstep, and beyond the ends the end
+//  zone holds, so the zone weights always sum to 1 (the same setting on all
+//  five zones is a plain offset):
+//
+//      o(x) = (1 - f) Z_i + f Z_i+1
+//      y'   = y + 0.464 stop x slider / 100 x Blend x clean x sat mask
+//
+//  Neutral Pivot removes the tint of the Mid zone (the pivot grey can only
+//  get lighter or darker); Clean Blacks and Clean Whites fade the toning out
+//  towards black and the brightest highlights; Sat Mask keeps it off
+//  saturated colours.
+//
+//  The zone weights change by at most 0.75 per stop and the offsets are
+//  small enough that a grey ramp can never reverse.  With every zone at 0
+//  (or Blend 0) the node returns its input bit exact.
+//
+//  POWER GRADE ORDER (DaVinci Wide Gamut)
+//    [camera log] -> [CST to DWG / DaVinci Intermediate] -> [corrections]
+//      -> [MC Pro Split  Transfer Function: DaVinci Intermediate]
+//      -> [CST DWG / DaVinci Intermediate -> Rec.709]
+//
+//  Version : 0.3
+//  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
+//            You may use this file for personal and commercial grading work.
+//            You may not redistribute, share, sell, sublicense or publish it,
+//            in whole or in part.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+//  UI
+// ----------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(uiHiR, Hi Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHiR, "Red offset in the Hi zone (centred 4 stops above the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiHiG, Hi Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHiG, "Green offset in the Hi zone (centred 4 stops above the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiHiB, Hi Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHiB, "Blue offset in the Hi zone (centred 4 stops above the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiHiMidR, Hi-Mid Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHiMidR, "Red offset in the Hi-Mid zone (centred 2 stops above the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiHiMidG, Hi-Mid Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHiMidG, "Green offset in the Hi-Mid zone (centred 2 stops above the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiHiMidB, Hi-Mid Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHiMidB, "Blue offset in the Hi-Mid zone (centred 2 stops above the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiMidR, Mid Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiMidR, "Red offset in the Mid zone (centred on the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiMidG, Mid Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiMidG, "Green offset in the Mid zone (centred on the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiMidB, Mid Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiMidB, "Blue offset in the Mid zone (centred on the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiLoMidR, Lo-Mid Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiLoMidR, "Red offset in the Lo-Mid zone (centred 2 stops below the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiLoMidG, Lo-Mid Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiLoMidG, "Green offset in the Lo-Mid zone (centred 2 stops below the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiLoMidB, Lo-Mid Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiLoMidB, "Blue offset in the Lo-Mid zone (centred 2 stops below the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiLoR, Lo Red, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiLoR, "Red offset in the Lo zone (centred 4 stops below the Pivot): + more red, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiLoG, Lo Green, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiLoG, "Green offset in the Lo zone (centred 4 stops below the Pivot): + more green, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiLoB, Lo Blue, DCTLUI_SLIDER_FLOAT, 0.0, -100.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiLoB, "Blue offset in the Lo zone (centred 4 stops below the Pivot): + more blue, - less. 100 is about half a stop.")
+DEFINE_UI_PARAMS(uiBlend, Blend, DCTLUI_SLIDER_FLOAT, 100.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiBlend, "Strength of the whole split tone, in percent.")
+DEFINE_UI_PARAMS(uiPivot, Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
+DEFINE_UI_TOOLTIP(uiPivot, "Centre of the Mid zone, in stops from 18 % grey. All five zones move with it.")
+DEFINE_UI_PARAMS(uiNeutral, Neutral Pivot, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiNeutral, "Keeps the pivot grey neutral: removes this percentage of the Mid zone's tint, so Mid can only brighten or darken.")
+DEFINE_UI_PARAMS(uiCleanBlacks, Clean Blacks, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiCleanBlacks, "Fades the toning out towards black, in percent (100 = neutral blacks). The fade starts about 2.5 stops below the Pivot.")
+DEFINE_UI_PARAMS(uiCleanWhites, Clean Whites, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiCleanWhites, "Fades the toning out towards the brightest highlights, in percent (100 = neutral whites from 5 stops above the Pivot).")
+DEFINE_UI_PARAMS(uiSatMask, Sat Mask, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
+DEFINE_UI_TOOLTIP(uiSatMask, "Keeps the toning off saturated colours, in percent: at 100 only the neutrals and soft colours are toned.")
+
+DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
+DEFINE_UI_PARAMS(uiShowCurves, Show Curves, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiShowCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input code value left to right, output bottom to top), with the diagonal, the middle grey (Pivot) line and the zone centres.")
+DEFINE_UI_PARAMS(uiShowSatMask, Highlight Sat Mask, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiShowSatMask, "Shows the picture in grey with the colours that Sat Mask keeps out of the toning painted magenta.")
+DEFINE_UI_PARAMS(uiShowRamp, Show Ramp, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiShowRamp, "Adds a grey ramp along the bottom of the frame, toned by the module, to see each zone's colour.")
+
+DEFINE_UI_PARAMS(uiInput, Transfer Function, DCTLUI_COMBO_BOX, 0, {TF_DI, TF_ACESCCT, TF_LOGC3, TF_LOGC4, TF_SLOG3, TF_VLOG, TF_CLOG3, TF_LOG3G10, TF_CINEON, TF_LINEAR}, {DaVinci Intermediate, ACEScct, ARRI LogC3, ARRI LogC4, Sony S-Log3, Panasonic V-Log, Canon Log 3, RED Log3G10, Cineon Log, Scene Linear})
+DEFINE_UI_TOOLTIP(uiInput, "Log curve of this node's input; it sets where middle grey and the zones sit. The output is in the same encoding. In a DaVinci Wide Gamut project: DaVinci Intermediate.")
+
+
+// ----------------------------------------------------------------------------
+//  CONSTANTS
+// ----------------------------------------------------------------------------
+
+#define MCP_STOP          0.07329248f
+#define MCP_MIDGRAY       0.18f
+#define MCP_SCALE         0.464f
+#define MCP_ZONE_C0       (-4.0f)
+#define MCP_ZONE_STEP     2.0f
+#define MCP_BLACK_WIDTH   2.5f
+#define MCP_BLACK_TOP     (-1.0f)
+#define MCP_LOG10_2       0.30102999566f
+#define MCP_WHITE_START   2.5f
+#define MCP_WHITE_WIDTH   2.5f
+#define MCP_SAT_CHROMA    0.08f
+
+
+// ----------------------------------------------------------------------------
+//  TRANSFER FUNCTIONS  (scene linear -> code value, the published curves)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float McpLog10(float x) { return _log2f(_fmaxf(x, 1.0e-10f)) * MCP_LOG10_2; }
+
+__DEVICE__ float McpDiDecode(float y)
+{
+    if (y > 0.02740668f) return _exp2f(_fminf(y, 5.0f) / MCP_STOP - 7.0f) - 0.0075f;
+    return y / 10.44426855f;
+}
+
+__DEVICE__ float McpDiEncode(float x)
+{
+    if (x > 0.00262409f) return (_log2f(x + 0.0075f) + 7.0f) * MCP_STOP;
+    return x * 10.44426855f;
+}
+
+__DEVICE__ float McpTfEncode(float x, int tf)
+{
+    if (tf == TF_ACESCCT)
+        return (x > 0.0078125f) ? (_log2f(x) + 9.72f) / 17.52f : 10.5402377416545f * x + 0.0729055341958355f;
+    if (tf == TF_LOGC3)
+        return (x > 0.010591f) ? 0.247190f * McpLog10(5.555556f * x + 0.052272f) + 0.385537f : 5.367655f * x + 0.092809f;
+    if (tf == TF_LOGC4)
+        return (x >= -0.0180569961f) ? (_log2f(2231.82631f * x + 64.0f) - 6.0f) / 14.0f * 0.907135875f + 0.0928641251f
+                             : (x - -0.0180569961f) / 0.113597209f;
+    if (tf == TF_SLOG3)
+        return (x >= 0.01125f) ? (420.0f + McpLog10((x + 0.01f) / 0.19f) * 261.5f) / 1023.0f
+                               : (x * (171.2102946929f - 95.0f) / 0.01125f + 95.0f) / 1023.0f;
+    if (tf == TF_VLOG)
+        return (x < 0.01f) ? 5.6f * x + 0.125f : 0.241514f * McpLog10(x + 0.00873f) + 0.598206f;
+    if (tf == TF_CLOG3)
+    {
+        if (x < -0.014f) return -0.36726845f * McpLog10(-x * 14.98325f + 1.0f) + 0.12783901f;
+        if (x <= 0.014f) return 1.9754798f * x + 0.12512219f;
+        return 0.36726845f * McpLog10(x * 14.98325f + 1.0f) + 0.12240537f;
+    }
+    if (tf == TF_LOG3G10)
+    {
+        float v = x + 0.01f;
+        return (v < 0.0f) ? v * 15.1927f : 0.224282f * McpLog10(v * 155.975327f + 1.0f);
+    }
+    if (tf == TF_CINEON)
+        return (685.0f + 300.0f * McpLog10(x * (1.0f - 0.0107977516f) + 0.0107977516f)) / 1023.0f;
+    return McpDiEncode(x);                    // DaVinci Intermediate, Scene Linear
+}
+
+__DEVICE__ float3 McpToWork(float3 c, int tf)
+{
+    if (tf == TF_LINEAR) return make_float3(McpDiEncode(c.x), McpDiEncode(c.y), McpDiEncode(c.z));
+    return c;
+}
+
+__DEVICE__ float3 McpFromWork(float3 y, int tf)
+{
+    if (tf == TF_LINEAR) return make_float3(McpDiDecode(y.x), McpDiDecode(y.y), McpDiDecode(y.z));
+    return y;
+}
+
+
+// ----------------------------------------------------------------------------
+//  THE SPLIT TONE  (plain arguments)
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float McpSmooth01(float x)
+{
+    float t = _saturatef(x);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+__DEVICE__ float3 McpLerp3(float3 a, float3 b, float f)
+{
+    return make_float3(a.x + f * (b.x - a.x), a.y + f * (b.y - a.y), a.z + f * (b.z - a.z));
+}
+
+// Zone offset at x stops from the pivot: z0 = Lo .. z4 = Hi.
+__DEVICE__ float3 McpZoneOffset(float x, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4)
+{
+    float t = _clampf((x - MCP_ZONE_C0) / MCP_ZONE_STEP, 0.0f, 4.0f);
+    int i = (int)_floor(t);
+    if (i > 3) i = 3;
+    float f = McpSmooth01(t - (float)i);
+    if (i == 0) return McpLerp3(z0, z1, f);
+    if (i == 1) return McpLerp3(z1, z2, f);
+    if (i == 2) return McpLerp3(z2, z3, f);
+    return McpLerp3(z3, z4, f);
+}
+
+// Sat Mask weight of a pixel: 1 = toned, 0 = kept out.
+__DEVICE__ float McpSatKeep(float3 y, float stop, float satMask)
+{
+    if (satMask <= 0.0f) return 1.0f;
+    float mean = (y.x + y.y + y.z) * (1.0f / 3.0f);
+    float cx = y.x - mean, cy = y.y - mean, cz = y.z - mean;
+    return 1.0f - satMask * 0.01f * McpSmooth01(_sqrtf(cx * cx + cy * cy + cz * cz) / (MCP_SAT_CHROMA * stop / MCP_STOP));
+}
+
+// t = (pivot code value, code values per stop, black in stops from the pivot)
+// g = (blend %, unused, clean blacks %, clean whites %), satMask %;
+// zone sliders in -100 .. 100, z2 (Mid) already has Neutral Pivot applied.
+__DEVICE__ float3 McpTone(float3 y, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4, float3 t, float4 g,
+                          float satMask)
+{
+    float lum = 0.3f * y.x + 0.6f * y.y + 0.1f * y.z;
+    float x = (lum - t.x) / t.y;
+    float3 o = McpZoneOffset(x, z0, z1, z2, z3, z4);
+    float w = g.x * 0.01f;
+    float xb = _fminf(t.z, MCP_BLACK_TOP - MCP_BLACK_WIDTH);
+    w *= 1.0f - g.z * 0.01f * (1.0f - McpSmooth01((x - xb) / MCP_BLACK_WIDTH));
+    w *= 1.0f - g.w * 0.01f * McpSmooth01((x - MCP_WHITE_START) / MCP_WHITE_WIDTH);
+    w *= McpSatKeep(y, t.y, satMask);
+    float k = MCP_SCALE * t.y * 0.01f * w;
+    return make_float3(y.x + k * o.x, y.y + k * o.y, y.z + k * o.z);
+}
+
+// Show Curves: the red, green and blue curves of a grey ramp across the whole
+// frame (input DI code 0 .. 1 left to right, output 0 .. 1 bottom to top),
+// the diagonal, the Pivot and the zone centres.  Returns (colour, 1) on a line.
+__DEVICE__ float4 McpCurves(int px, int py, int w, int h, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4,
+                            float3 t, float4 g, float satMask)
+{
+    float fw = (float)w, fh = (float)h, asp = fw / fh;
+    float u0 = ((float)px + 0.5f) / fw, du = 1.0f / fw;
+    float v = 1.0f - ((float)py + 0.5f) / fh, dv = 1.0f / fh;
+    float3 c0 = McpTone(make_float3(u0, u0, u0), z0, z1, z2, z3, z4, t, g, satMask);
+    float3 c1 = McpTone(make_float3(u0 + du, u0 + du, u0 + du), z0, z1, z2, z3, z4, t, g, satMask);
+    float kr = (c1.x - c0.x) / du * asp, kg = (c1.y - c0.y) / du * asp, kb = (c1.z - c0.z) / du * asp;
+    if (_fabs(v - c0.x) / dv < 1.3f * _sqrtf(1.0f + kr * kr)) return make_float4(0.75f, 0.12f, 0.12f, 1.0f);
+    if (_fabs(v - c0.y) / dv < 1.3f * _sqrtf(1.0f + kg * kg)) return make_float4(0.15f, 0.70f, 0.15f, 1.0f);
+    if (_fabs(v - c0.z) / dv < 1.3f * _sqrtf(1.0f + kb * kb)) return make_float4(0.20f, 0.30f, 0.85f, 1.0f);
+    if (_fabs(v - u0) / dv < 1.0f * _sqrtf(1.0f + asp * asp)) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
+    if (_fabs(u0 - t.x) < 1.2f * du) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
+    for (int i = 0; i < 5; ++i)
+    {
+        if (i == 2) continue;
+        float cz = t.x + (MCP_ZONE_C0 + MCP_ZONE_STEP * (float)i) * t.y;
+        if (_fabs(u0 - cz) < 0.6f * du && ((py / 6) % 2 == 0)) return make_float4(0.40f, 0.40f, 0.40f, 1.0f);
+    }
+    return make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+}
+
+
+// ----------------------------------------------------------------------------
+//  ENTRY POINT
+// ----------------------------------------------------------------------------
+
+// NOTE: Resolve parses this declaration with a line-based matcher.  It must
+// stay on ONE line, in exactly this form, or Resolve reports "wrong argument".
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p_R, float p_G, float p_B)
+{
+    float3 c = make_float3(p_R, p_G, p_B);
+    if (uiBypass) return c;
+    float3 z0 = make_float3(uiLoR, uiLoG, uiLoB), z1 = make_float3(uiLoMidR, uiLoMidG, uiLoMidB);
+    float3 z2 = make_float3(uiMidR, uiMidG, uiMidB), z3 = make_float3(uiHiMidR, uiHiMidG, uiHiMidB);
+    float3 z4 = make_float3(uiHiR, uiHiG, uiHiB);
+    if (uiNeutral > 0.0f)
+    {
+        float m = (z2.x + z2.y + z2.z) * (1.0f / 3.0f), n = uiNeutral * 0.01f;
+        z2 = make_float3(z2.x - n * (z2.x - m), z2.y - n * (z2.y - m), z2.z - n * (z2.z - m));
+    }
+    float4 g = make_float4(uiBlend, uiPivot, uiCleanBlacks, uiCleanWhites);
+    float piv = McpTfEncode(MCP_MIDGRAY * _exp2f(uiPivot), uiInput);
+    float stop = McpTfEncode(2.0f * MCP_MIDGRAY, uiInput) - McpTfEncode(MCP_MIDGRAY, uiInput);
+    float3 t = make_float3(piv, stop, (McpTfEncode(0.0f, uiInput) - piv) / stop);
+    int any = (uiLoR != 0.0f || uiLoG != 0.0f || uiLoB != 0.0f || uiLoMidR != 0.0f || uiLoMidG != 0.0f ||
+               uiLoMidB != 0.0f || uiMidR != 0.0f || uiMidG != 0.0f || uiMidB != 0.0f || uiHiMidR != 0.0f ||
+               uiHiMidG != 0.0f || uiHiMidB != 0.0f || uiHiR != 0.0f || uiHiG != 0.0f || uiHiB != 0.0f) &&
+              uiBlend != 0.0f;
+    if (uiShowCurves)
+    {
+        float4 ov = McpCurves(p_X, p_Y, p_Width, p_Height, z0, z1, z2, z3, z4, t, g, uiSatMask);
+        if (ov.w > 0.0f) return McpFromWork(make_float3(ov.x, ov.y, ov.z), uiInput);
+    }
+    float3 y = McpToWork(c, uiInput);
+    if (uiShowRamp && p_Y >= p_Height - p_Height / 12)
+    {
+        float u = ((float)p_X + 0.5f) / (float)p_Width;
+        y = make_float3(u, u, u);
+        return McpFromWork(any ? McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask) : y, uiInput);
+    }
+    if (uiShowSatMask)
+    {
+        float lum = 0.3f * y.x + 0.6f * y.y + 0.1f * y.z;
+        float kept = 1.0f - McpSatKeep(y, stop, uiSatMask);
+        return McpFromWork(make_float3(lum + kept * 0.25f * stop, lum - kept * 1.5f * stop, lum + kept * 0.25f * stop),
+                           uiInput);
+    }
+    if (!any) return c;
+    return McpFromWork(McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask), uiInput);
+}
+
+// MarkCaptures MC Pro Split
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com

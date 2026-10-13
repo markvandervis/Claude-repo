@@ -33,8 +33,12 @@ UI = dict(blend="uiBlend", pivot="uiPivot", neutral="uiNeutral", clean_blacks="u
           clean_whites="uiCleanWhites", sat_mask="uiSatMask")
 
 
+DI_PIV, DI_STOP, _ = ps.tf_constants("TF_DI", 0.0)
+K = ps.SCALE * DI_STOP          # code-value offset of a zone slider at 100 (tests use +-1 = +-100)
+
+
 def zone_ui(zones):
-    return {"ui%s%s" % (ZVAR[i], ch): float(zones[i][k]) for i in range(5) for k, ch in enumerate("RGB")}
+    return {"ui%s%s" % (ZVAR[i], ch): 100.0 * float(zones[i][k]) for i in range(5) for k, ch in enumerate("RGB")}
 
 
 def run(px, zones=None, **kw):
@@ -44,10 +48,10 @@ def run(px, zones=None, **kw):
     return t.run(px, exe=EXE, **ui)
 
 
-def ref(px, enc="PS_DWG", zones=None, **kw):
+def ref(px, enc="TF_DI", zones=None, **kw):
     p = dict(kw)
     if zones is not None:
-        p["zones"] = np.array(zones, dtype=float)
+        p["zones"] = 100.0 * np.array(zones, dtype=float)
     return [ps.pixel(c, enc, **p) for c in px]
 
 
@@ -118,14 +122,10 @@ def test_cross():
     section("3. DCTL == reference")
     rng = random.Random(2)
     for e, i in ENC.items():
-        if e == "PS_DWG":
-            px = [tuple(f32(rng.uniform(0.0, 0.9)) for _ in range(3)) for _ in range(60)]
-        elif e == "PS_ACESCCT":
-            px = [tuple(f32(rng.uniform(0.1, 0.8)) for _ in range(3)) for _ in range(60)]
-        elif e == "PS_LINEAR":
+        if e == "TF_LINEAR":
             px = [tuple(f32(rng.uniform(0.0, 2.0) * rng.choice([0.05, 1.0])) for _ in range(3)) for _ in range(60)]
         else:
-            px = [tuple(f32(rng.uniform(0.0, 1.0)) for _ in range(3)) for _ in range(60)]
+            px = [tuple(f32(rng.uniform(0.0, 0.9)) for _ in range(3)) for _ in range(60)]
         w = 0.0
         for _ in range(12):
             zones = random_zones(rng)
@@ -133,7 +133,7 @@ def test_cross():
                      clean_blacks=rng.uniform(0, 100), clean_whites=rng.uniform(0, 100),
                      sat_mask=rng.choice([0.0, rng.uniform(0, 100)]))
             w = max(w, maxdiff(run(px, zones, uiInput=i, **p), ref(px, e, zones, **p)))
-        check(w < 1e-4 if e != "PS_LINEAR" else w < 5e-4, "%s: max |DCTL - reference| = %.1e" % (e, w))
+        check(w < 2e-5 if e != "TF_LINEAR" else w < 5e-4, "%s: max |DCTL - reference| = %.1e" % (e, w))
 
 
 def test_ramps():
@@ -158,28 +158,28 @@ def test_controls():
     centres = {"Lo": -4, "LoMid": -2, "Mid": 0, "HiMid": 2, "Hi": 4}
 
     def greyx(x):            # a grey x stops from the pivot on the DaVinci Intermediate log scale
-        v = f32(ps.di_encode(ps.MIDGRAY) + x * ps.STOP)
+        v = f32(DI_PIV + x * DI_STOP)
         return [(v, v, v)]
     for name, st in centres.items():
         g = greyx(st)
         o = run(g, Z(**{name: (1, 0, 0)}), clean_blacks=0, clean_whites=0)[0]
         others = [run(greyx(s), Z(**{name: (1, 0, 0)}), clean_blacks=0, clean_whites=0)[0][0] - greyx(s)[0][0]
                   for n, s in centres.items() if abs(s - st) >= 4]
-        check(abs(o[0] - g[0][0] - ps.SCALE) < 2e-5 and o[1] == g[0][1] and all(abs(d) < 1e-6 for d in others),
+        check(abs(o[0] - g[0][0] - K) < 2e-5 and o[1] == g[0][1] and all(abs(d) < 1e-6 for d in others),
               "%s Red +1: red +%.3f log at %+d log stops, nothing two zones away" % (name, o[0] - g[0][0], st))
     ramp = grey(np.linspace(-6, 6, 25))
     same = run(ramp, Z(**{n: (0.5, -0.3, 0.2) for n in ZVAR}), clean_blacks=0, clean_whites=0)
     d = np.array(same) - np.array(ramp)
-    check(np.abs(d - ps.SCALE * np.array([0.5, -0.3, 0.2])).max() < 2e-5,
+    check(np.abs(d - K * np.array([0.5, -0.3, 0.2])).max() < 2e-5,
           "the same setting on all five zones is one plain offset")
     half = np.array(run(grey((0,)), Z(Mid=(1, 0, 0)), blend=50)[0]) - np.array(grey((0,))[0])
-    check(abs(half[0] - 0.5 * ps.SCALE) < 2e-5, "Blend 50 gives half the toning")
+    check(abs(half[0] - 0.5 * K) < 2e-5, "Blend 50 gives half the toning")
     piv = run(grey((1.0,)), Z(Mid=(1, 0, 0)), pivot=1.0)[0][0] - grey((1.0,))[0][0]
-    check(abs(piv - ps.SCALE) < 2e-5, "Pivot +1 moves the Mid zone up one stop")
+    check(abs(piv - K) < 2e-5, "Pivot +1 moves the Mid zone up one stop")
     nm = np.array(run(grey((0,)), Z(Mid=(1, 0, -1)), neutral=100)[0]) - np.array(grey((0,))[0])
     check(np.abs(nm).max() < 1e-6, "Neutral Pivot 100 keeps the pivot grey neutral (Mid tint removed)")
     nb = np.array(run(grey((0,)), Z(Mid=(1, 1, 1)), neutral=100)[0]) - np.array(grey((0,))[0])
-    check(nb.min() > 0.9 * ps.SCALE, "but Mid can still brighten the pivot")
+    check(nb.min() > 0.9 * K, "but Mid can still brighten the pivot")
     deep = grey((-10,)) + [(0.0, 0.0, 0.0)]
     check(maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=100), deep) < 2e-4 and
           maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=0), deep) > 0.02, "Clean Blacks 100 keeps black neutral")
@@ -203,6 +203,17 @@ def test_curves_extremes():
     on = run(pts, zz, uiShowCurves=1)
     tone = run(pts, zz)
     line = [i for i, (a, b) in enumerate(zip(on, tone)) if a != b]
+    for tf in ("TF_DI", "TF_SLOG3", "TF_LOGC3"):
+        mid = ps.tf_encode(ps.MIDGRAY, tf)
+        col_x = int(mid * 1920)
+        o = run([(col_x, 500, 0.2, 0.2, 0.2), (col_x + 40, 500, 0.2, 0.2, 0.2)], uiShowCurves=1, uiInput=ENC[tf])
+        check(o[0][0] > 0.9 and o[1][0] < 0.3, "%s: Show Curves draws the middle grey line at %.3f" % (tf, mid))
+    ramp = run([(x, 1079, 0.5, 0.5, 0.5) for x in (100, 1800)], zz, uiShowRamp=1)
+    check(ramp[0][0] < 0.1 and ramp[1][0] > 0.9 and run([(100, 0, 0.5, 0.5, 0.5)], zz, uiShowRamp=1)[0] != ramp[0],
+          "Show Ramp puts a toned grey ramp along the bottom")
+    sm = run([col(0.3, 0.02, 0.02), (f32(0.4), f32(0.4), f32(0.4))], uiShowSatMask=1, sat_mask=100)
+    check(sm[0][1] < sm[0][0] and sm[0][1] < sm[0][2] and max(sm[1]) - min(sm[1]) < 1e-6,
+          "Highlight Sat Mask paints the masked colours magenta and shows the rest in grey")
     check(5 < len(line) < 600, "Show Curves draws thin lines over the frame (%d of 3000 random pixels)" % len(line))
     check(all(on[i] == tone[i] for i in range(len(pts)) if i not in line) and off[0] == (f32(0.4), f32(0.3), f32(0.2)),
           "elsewhere the picture is the toned image, unchanged")

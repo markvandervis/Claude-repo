@@ -3,11 +3,13 @@
 MarkCaptures MC Pro Split - (c) 2026 Mark van der Vis / MarkCaptures.
 All rights reserved; see ../LICENSE.txt.
 
-Mirrors src/MC_Pro-Split.dctl.in.  Works in DaVinci Wide Gamut, on the
-DaVinci Intermediate log value y of each channel, where adding to a channel is
-an exposure shift of that channel.
+Mirrors src/MC_Pro-Split.dctl.in.  Works directly on the log code values y
+of the chosen Transfer Function (in whatever gamut the image is in), where
+adding to a channel is an exposure shift of that channel.  Scene Linear is
+worked on as DaVinci Intermediate.
 
-    x  = (luma(y) - DI(0.184 x 2^pivot)) / stop     brightness in stops
+    stop = TF(0.36) - TF(0.18)                      code values per stop
+    x    = (luma(y) - TF(0.18 x 2^pivot)) / stop    brightness in stops
     Five zones, Lo / Lo-Mid / Mid / Hi-Mid / Hi, centred at -4, -2, 0, +2, +4
     stops.  Between two neighbouring centres the zone offsets blend with a
     smoothstep, outside the ends the end zone holds, so the weights always sum
@@ -31,13 +33,15 @@ import math
 import numpy as np
 
 STOP = 0.07329248             # DaVinci Intermediate log per stop (above the toe)
-MIDGRAY = 0.184
-SCALE = 0.034                 # log offset at a zone slider of 1 (about half a stop)
+MIDGRAY = 0.18
+SCALE = 0.464                 # offset in stops at a zone slider of 100 (about half a stop)
 ZONES = ("Lo", "Lo-Mid", "Mid", "Hi-Mid", "Hi")
 ZONE_CENTRE0, ZONE_STEP = -4.0, 2.0
-# Clean Blacks / Whites fade zones, in DaVinci Intermediate stops from the
-# pivot (black, code 0, is at x = -4.6 for the default pivot)
-BLACK_START, BLACK_WIDTH = -4.6, 2.5
+# Clean Blacks fades from the transfer function's black (TF(0)) up over
+# BLACK_WIDTH stops, but never above BLACK_TOP stops (for curves whose black
+# sits close to grey on the log scale); Clean Whites from WHITE_START stops.
+BLACK_WIDTH = 2.5
+BLACK_TOP = -1.0
 WHITE_START, WHITE_WIDTH = 2.5, 2.5
 SAT_CHROMA = 0.08             # chroma (log) at which Sat Mask is fully on
 LUMA = (0.30, 0.60, 0.10)
@@ -52,11 +56,56 @@ AP1_TO_REC709 = np.array([[1.70505099, -0.62179212, -0.08325887],
 AP1_TO_DWG = REC709_TO_DWG @ AP1_TO_REC709
 DWG_TO_AP1 = np.linalg.inv(AP1_TO_DWG)
 
-ENCODINGS = [("PS_DWG", "DaVinci WG Intermediate"), ("PS_ACESCCT", "ACES AP1 ACEScct"),
-             ("PS_LINEAR", "Scene Linear Rec709"), ("PS_709", "Rec709 Gamma 2.4")]
+ENCODINGS = [("TF_DI", "DaVinci Intermediate"), ("TF_ACESCCT", "ACEScct"), ("TF_LOGC3", "ARRI LogC3"),
+             ("TF_LOGC4", "ARRI LogC4"), ("TF_SLOG3", "Sony S-Log3"), ("TF_VLOG", "Panasonic V-Log"),
+             ("TF_CLOG3", "Canon Log 3"), ("TF_LOG3G10", "RED Log3G10"), ("TF_CINEON", "Cineon Log"),
+             ("TF_LINEAR", "Scene Linear")]
 
 DEFAULTS = dict(zones=np.zeros((5, 3)), blend=100.0, pivot=0.0, neutral=0.0, clean_blacks=30.0,
                 clean_whites=30.0, sat_mask=0.0)
+
+_C4A = (2.0 ** 18 - 16.0) / 117.45
+_C4B = (1023.0 - 95.0) / 1023.0
+_C4C = 95.0 / 1023.0
+_C4S = (7.0 * math.log(2.0) * 2.0 ** (7.0 - 14.0 * _C4C / _C4B)) / (_C4A * _C4B)
+_C4T = (2.0 ** (14.0 * (-_C4C / _C4B) + 6.0) - 64.0) / _C4A
+_CIN_BLACK = 10.0 ** ((95.0 - 685.0) / 300.0)
+
+
+def tf_encode(x, tf):
+    """Scene linear -> code value of the transfer function (the published curves)."""
+    if tf in ("TF_DI", "TF_LINEAR"):
+        return di_encode(x)
+    if tf == "TF_ACESCCT":
+        return cct_encode(max(x, 1e-10)) if x > 0.0078125 else 10.5402377416545 * x + 0.0729055341958355
+    if tf == "TF_LOGC3":
+        return 0.247190 * math.log10(5.555556 * x + 0.052272) + 0.385537 if x > 0.010591 else 5.367655 * x + 0.092809
+    if tf == "TF_LOGC4":
+        return (math.log2(_C4A * x + 64.0) - 6.0) / 14.0 * _C4B + _C4C if x >= _C4T else (x - _C4T) / _C4S
+    if tf == "TF_SLOG3":
+        if x >= 0.01125000:
+            return (420.0 + math.log10((x + 0.01) / 0.19) * 261.5) / 1023.0
+        return (x * (171.2102946929 - 95.0) / 0.01125 + 95.0) / 1023.0
+    if tf == "TF_VLOG":
+        return 5.6 * x + 0.125 if x < 0.01 else 0.241514 * math.log10(x + 0.00873) + 0.598206
+    if tf == "TF_CLOG3":
+        if x < -0.014:
+            return -0.36726845 * math.log10(-x * 14.98325 + 1.0) + 0.12783901
+        if x <= 0.014:
+            return 1.9754798 * x + 0.12512219
+        return 0.36726845 * math.log10(x * 14.98325 + 1.0) + 0.12240537
+    if tf == "TF_LOG3G10":
+        x = x + 0.01
+        return x * 15.1927 if x < 0.0 else 0.224282 * math.log10(x * 155.975327 + 1.0)
+    if tf == "TF_CINEON":
+        return (685.0 + 300.0 * math.log10(max(x * (1.0 - _CIN_BLACK) + _CIN_BLACK, 1e-10))) / 1023.0
+    raise KeyError(tf)
+
+
+def tf_constants(tf, pivot):
+    """(pivot code value, code values per stop, black code value)."""
+    stop = tf_encode(2.0 * MIDGRAY, tf) - tf_encode(MIDGRAY, tf)
+    return tf_encode(MIDGRAY * 2.0 ** pivot, tf), stop, tf_encode(0.0, tf)
 
 
 def smooth01(x):
@@ -81,27 +130,15 @@ def cct_encode(x):
 
 
 def to_work(c, enc):
-    if enc == "PS_DWG":
-        return np.array(c, dtype=float)
-    if enc == "PS_ACESCCT":
-        lin = AP1_TO_DWG @ np.array([cct_decode(v) for v in c])
-    elif enc == "PS_LINEAR":
-        lin = REC709_TO_DWG @ np.array(c, dtype=float)
-    else:
-        lin = REC709_TO_DWG @ np.array([max(v, 0.0) ** 2.4 for v in c])
-    return np.array([di_encode(v) for v in lin])
+    if enc == "TF_LINEAR":
+        return np.array([di_encode(v) for v in c])
+    return np.array(c, dtype=float)
 
 
 def from_work(y, enc):
-    if enc == "PS_DWG":
-        return np.array(y)
-    lin = np.array([di_decode(v) for v in y])
-    if enc == "PS_ACESCCT":
-        return np.array([cct_encode(v) for v in DWG_TO_AP1 @ lin])
-    lin = DWG_TO_REC709 @ lin
-    if enc == "PS_LINEAR":
-        return lin
-    return np.array([max(v, 0.0) ** (1.0 / 2.4) for v in lin])
+    if enc == "TF_LINEAR":
+        return np.array([di_decode(v) for v in y])
+    return np.array(y)
 
 
 def zone_offset(x, zones):
@@ -111,20 +148,22 @@ def zone_offset(x, zones):
     return (1.0 - f) * zones[i] + f * zones[i + 1]
 
 
-def tone(y, p):
-    """Mirror of McpTone: y = DI log of DWG (3), p = control dict."""
+def tone(y, p, tf="TF_DI"):
+    """Mirror of McpTone: y = code values (3), p = control dict."""
     y = np.array(y, dtype=float)
     zones = np.array(p["zones"], dtype=float).copy()
     if p["neutral"] > 0.0:
         zones[2] = zones[2] - p["neutral"] / 100.0 * (zones[2] - zones[2].mean())
-    x = (float(np.dot(LUMA, y)) - di_encode(MIDGRAY * 2.0 ** p["pivot"])) / STOP
-    o = zone_offset(x, zones)
+    piv, stop, black = tf_constants(tf, p["pivot"])
+    x = (float(np.dot(LUMA, y)) - piv) / stop
+    o = zone_offset(x, zones) * (stop / 100.0)
     w = p["blend"] / 100.0
-    w *= 1.0 - p["clean_blacks"] / 100.0 * (1.0 - smooth01((x - BLACK_START) / BLACK_WIDTH))
+    x_black = min((black - piv) / stop, BLACK_TOP - BLACK_WIDTH)
+    w *= 1.0 - p["clean_blacks"] / 100.0 * (1.0 - smooth01((x - x_black) / BLACK_WIDTH))
     w *= 1.0 - p["clean_whites"] / 100.0 * smooth01((x - WHITE_START) / WHITE_WIDTH)
     if p["sat_mask"] > 0.0:
         m = float(np.linalg.norm(y - y.mean()))
-        w *= 1.0 - p["sat_mask"] / 100.0 * smooth01(m / SAT_CHROMA)
+        w *= 1.0 - p["sat_mask"] / 100.0 * smooth01(m / (SAT_CHROMA * stop / STOP))
     return y + SCALE * w * o
 
 
@@ -132,8 +171,8 @@ def active(p):
     return bool(np.any(np.array(p["zones"]) != 0.0)) and p["blend"] != 0.0
 
 
-def pixel(c, enc="PS_DWG", **ui):
+def pixel(c, enc="TF_DI", **ui):
     p = dict(DEFAULTS, **ui)
     if not active(p):
         return tuple(c)
-    return tuple(from_work(tone(to_work(c, enc), p), enc))
+    return tuple(from_work(tone(to_work(c, enc), p, enc), enc))

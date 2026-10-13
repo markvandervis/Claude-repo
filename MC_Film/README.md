@@ -161,27 +161,37 @@ They sit in the full film chain shown above (Halation before MC Film Negative, G
 - Halation: an even field is untouched, nothing ever darkens, no cyan cores on any gauge, the halo colour, gauge scaling and the threshold.
 - Both DCTLs match the Python reference (`tools/mcfilm_effects.py`).
 
-## MC Pro Split v0.2 (RGB split tone, five zones)
+## MC Pro Split v0.3 (RGB split tone, five zones)
 
-`MC_Pro-Split-v0.2.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It will be part of the OFX plugin.
+`MC_Pro-Split-v0.3.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It is made to sit in a PowerGrade, and it will be part of the OFX plugin.
 
-It works in DaVinci Wide Gamut on the DaVinci Intermediate log value of each channel, so each offset is an exposure shift of that channel. The zones are centred at +4, +2, 0, −2 and −4 stops from the Pivot (on the log scale, which compresses near black). Between two centres the zones blend smoothly, and the weights always add up to 1, so the same setting on all five zones is one plain offset. With every zone at 0 the node returns its input unchanged, bit for bit, and a grey ramp can never reverse.
+**PowerGrade order (DaVinci Wide Gamut):**
+
+```
+[camera log, e.g. S-Log3] -> [CST to DaVinci Wide Gamut / DaVinci Intermediate] -> [corrections]
+  -> [MC Pro Split  Transfer Function: DaVinci Intermediate]
+  -> [CST DaVinci Wide Gamut / Intermediate -> Rec.709 Gamma 2.4]
+```
+
+It works directly on the log code values of the chosen **Transfer Function**, in the image's own gamut, so each offset is an exposure shift of that channel. The transfer function sets middle grey (TF(0.18)) and the size of a stop, so the zones land in the same place whatever the log curve. The zones are centred at +4, +2, 0, −2 and −4 stops from the Pivot. They blend smoothly, and the weights always add up to 1, so the same setting on all five zones is one plain offset. With every zone at 0, the node returns its input unchanged, bit for bit, and a grey ramp can never reverse.
 
 | Control | What it does |
 |---|---|
-| Hi / Hi-Mid / Mid / Lo-Mid / Lo Red, Green, Blue | Offset per channel per zone, −1 to +1 (1 is about half a stop) |
+| Hi / Hi-Mid / Mid / Lo-Mid / Lo Red, Green, Blue | Offset per channel per zone, −100 to +100 (100 is about half a stop) |
 | Blend | Strength of the whole split tone, in % |
-| Pivot | Centre of the Mid zone in stops from 18% grey; all zones move with it |
+| Pivot | Centre of the Mid zone in stops from middle grey; all zones move with it |
 | Neutral Pivot | Removes this % of the Mid zone's tint, so the pivot grey only brightens or darkens |
-| Clean Blacks | Fades the toning out towards black, in % (default 30) |
-| Clean Whites | Fades the toning out towards the brightest highlights, in % (default 30) |
+| Clean Blacks / Clean Whites | Fade the toning out towards black / the brightest highlights, in % (default 30) |
 | Sat Mask | Keeps the toning off saturated colours, in % |
-| Show Curves | Draws the red, green and blue curves of a grey ramp over the whole frame, with the diagonal, the Pivot and the zone centres |
-| Encoding | DWG (default), ACEScct, Scene Linear Rec709, Rec709 Gamma 2.4; output in the same encoding |
+| Show Curves | Red, green and blue curves of a grey ramp over the whole frame, with the diagonal, the middle grey line and the zone centres |
+| Highlight Sat Mask | The picture in grey, with the colours Sat Mask keeps out painted magenta |
+| Show Ramp | A toned grey ramp along the bottom of the frame |
+| Transfer Function | DaVinci Intermediate (default), ACEScct, ARRI LogC3, ARRI LogC4, Sony S-Log3, Panasonic V-Log, Canon Log 3, RED Log3G10, Cineon Log, Scene Linear |
 
-**Node placement.** Use it on the scene before MC Film Negative, or on the finished print with MC Film Print set to Output DaVinci WG Intermediate, before the final CST. `docs/prosplit.png` shows a test chart before and after, and with Show Curves on.
-
-`python3 tests/test_prosplit.py` checks it (34 checks): identity at defaults, DCTL == reference in every encoding, grey ramps never reverse for extreme and random zone settings, every zone acts only where it should, and every control acts in the right direction.
+`docs/prosplit.png` shows a test chart before and after, and with Show Curves on. `python3 tests/test_prosplit.py` checks it (51 checks):
+- Identity at defaults for every transfer function, and DCTL == reference for every transfer function.
+- Grey ramps never reverse for extreme and random zone settings.
+- Every zone acts only where it should, and every control and view acts in the right direction.
 
 ## Roadmap (feature parity with the commercial film suites)
 
@@ -189,7 +199,7 @@ The full feature-by-feature status is in `docs/FEATURES.md`.
 
 **DCTLs: colour, per pixel (next)**
 - ~~Bleach Bypass~~ (done in Core v0.2)
-- ~~Cast & Crossover~~ (done: MC Pro Split v0.2, an RGB split tone in five zones)
+- ~~Cast & Crossover~~ (done: MC Pro Split v0.3, an RGB split tone in five zones)
 - ~~Film Sat~~ (done in Core v0.2), Tone Core, Curves
 - Palette (harmoniser)
 - Balance (skin-driven white balance and exposure; reuses the MC Skin Guard qualifier)
