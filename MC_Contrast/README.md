@@ -69,11 +69,13 @@ Between the LUT nodes the image stays in DWG/DI, the space the LUTs were exporte
 - **Midtones key.** In the PowerGrade the key is cleaned up spatially (Denoise 100), which a per-pixel DCTL can't do. With the key's own very narrow soft edges, contrast 1.1 would make the tone curve run backwards at the top of the key. So the soft edges are widened just enough to keep the curve rising (to about 0.037 low and 0.057 high at 100 %). That's also why its LUT export showed almost nothing: a LUT can't hold the spatial key. Midtones is the one node that isn't measured.
 - **Shadows key.** Its Denoise 80 is spatial too. The LUT has the key per pixel, as the DCTL does.
 - **LUT interpolation.** The Density LUT gives exact greys a sharp lift (+0.04 at about 60 %) that near-greys don't get. Trilinear interpolation smears that spike and bends the grey ramp backwards. So the DCTL reads every LUT at its lattice points and interpolates tetrahedrally itself: greys stay on the LUT's own grey axis, whatever the project's LUT interpolation is set to.
+- **Clipped LUT exports.** Resolve clips every LUT it exports to 0–1, but the real nodes push some very dark saturated colours (and some bright ones) past that. Later nodes, like a print emulation or a black lift, bring that range back into view, so a clipped LUT shows as a flat floor in the blacks. `tools/make_luts.py` rebuilds the clipped entries from Resolve's exports in `data/resolve/` as the smoothest continuation of the rest of the LUT (a minimum-curvature fill, limited to −0.25 … 1.25 DI). Every entry Resolve exported unclipped stays exactly as it was.
 - **v1.0 → v1.1.** v1.0 rebuilt Diffusion, Hue Adjustments, Contrast and Shadows from the curve points stored in the .drx. Resolve's exports showed that its curves don't pass through those points (they behave more like a Bézier over them). That crushed the shadows: ACEScct 0.10 came out at 0.067 instead of 0.107. v1.1 uses the measured nodes, and matches the chain of exported LUTs to 0.0003 on average.
 
 ## Build and test
 
 ```
+python3 tools/make_luts.py                # rebuild MarkCaptures/source/*.cube from data/resolve/ (a few minutes)
 python3 tools/build_dctl.py               # regenerate the DCTL from src/ and tools/mc_contrast.py
 python3 tests/test_contrast.py       # compiles the DCTL on the host (C++11 and C99, -Werror) and checks it
 ```

@@ -171,6 +171,22 @@ def test_identity():
     check(e.max() < 1e-4, "every node at 0: round trip error %.1e" % e.max())
 
 
+def test_unclip():
+    print("LUTs vs Resolve's exports")
+    for name in m.LUT_FILES:
+        src = m.load_cube(os.path.join(ROOT, "data", "resolve", name + ".cube"))
+        L = m.lut(name)
+        lo, hi = src <= 1e-7, src >= 1.0 - 1e-7
+        free = ~(lo | hi)
+        check(np.abs(L - src)[free].max() < 1e-6, "%s: every unclipped entry is Resolve's" % name)
+        check(np.all(L[lo] <= 1e-7) and np.all(L[hi] >= 1.0 - 1e-7),
+              "%s: entries Resolve clipped stay past the clip (%.0f%% continued)" % (name, 100.0 * np.mean(np.abs(L - src) > 0)))
+    # a dark blue ramp no longer sits on a flat floor in red
+    t = np.linspace(0.05, 0.6, 12)[:, None]
+    a = m.dwg_to_cct(run(t * np.array([0.05, 0.08, 0.14])))
+    check(np.ptp(a[:, 0]) > 0.02, "dark blues: red keeps moving below the old floor (range %.3f)" % np.ptp(a[:, 0]))
+
+
 def test_nodes():
     print("nodes")
     off = {k: 0.0 for k in STRENGTHS}
@@ -233,7 +249,7 @@ def test_tone():
 
 def main():
     build()
-    for t in (test_static, test_identity, test_cross, test_nodes, test_tone):
+    for t in (test_static, test_identity, test_cross, test_unclip, test_nodes, test_tone):
         t()
     print("\n%d checks, %d failed" % (COUNT[0], len(FAILS)))
     for f in FAILS:
