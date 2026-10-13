@@ -66,7 +66,8 @@ def build():
     lines.append("enum { BB_OFF = 0, BB_AUTHENTIC = 1, BB_GRUNGE = 2 };")
     lines.append("enum { BS_PRINT = 0, BS_NEGATIVE = 1 };")
     lines.append("enum { HE_DWG = 0, HE_ACESCCT = 1, HE_LINEAR = 2 };")
-    lines.append("enum { HQ_DRAFT = 0, HQ_GOOD = 1, HQ_BEST = 2 };")
+    lines.append("enum { HQ_DRAFT = 0, HQ_GOOD = 1, HQ_BEST = 2, HQ_ULTRA = 3 };")
+    lines.append("enum { HS_MATCHED = 0, HS_PHYSICAL = 1 };")
     open(os.path.join(HERE, "mcf_enums.h"), "w").write("\n".join(lines) + "\n")
     define = '-DMCF_DCTL="../%s"' % os.path.basename(DCTL)
     flags = ["-O2", "-Wall", "-Wextra", "-Wno-unused-parameter", "-Werror", define]

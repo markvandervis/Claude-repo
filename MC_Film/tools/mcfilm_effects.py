@@ -43,7 +43,11 @@ CINEON_BLACK = 95.0 / 1023.0
 CINEON_DPC = 2.046
 
 HALO_UM = 80.0
-HALO_TAPS = 128
+MATCH_SIZE = 2.0          # Matched mode: Size 1 = the 35mm preset of docs/PRESETS.md
+MATCH_GROWTH = 0.07       # on-screen size growth (S35 width / gauge width)^0.07
+MATCH_AMOUNT = 0.2        # +20 % amount at 8mm
+MATCH_COLOUR = 0.15       # colour 0.15 redder at 8mm
+HALO_TAPS = 256
 HALO_TRUNC = 6.0          # kernel truncated at 6 exponential scales
 MIDGRAY = 0.184
 GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
@@ -176,38 +180,56 @@ def threshold(v, thr):
     return x * x / (2.0 * thr)
 
 
-def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.2, threshold_stops=0.0,
-                   gauge_i=4, quality=1):
+def halation_frame(frame, width, height, amount=0.25, size=1.0, colour=0.6, threshold_stops=0.0,
+                   gauge_i=4, quality=1, bloom=0.25, matched=True):
     """frame: row-major list of DWG / DI pixels.  Returns the same encoding."""
     radii, cs, sn = halo_taps()
     thr = MIDGRAY * 2.0 ** threshold_stops if threshold_stops > 0.0 else 0.0
-    foot = GAUGES[gauge_i][2] * 1000.0 / width
-    scale = HALO_UM * size / foot
-    stride = {2: 1, 1: 2, 0: 4}[quality]           # Best 128, Good 64, Draft 32
-    red = [threshold(di_decode(p[0]), thr) for p in frame]
+    gauge_um = GAUGES[gauge_i][2] * 1000.0
+    ref_um = [g for g in GAUGES if g[0] == "GAUGE_S35"][0][2] * 1000.0
+    small_um = [g for g in GAUGES if g[0] == "GAUGE_8"][0][2] * 1000.0
+    if matched:
+        g = math.log2(ref_um / gauge_um) / math.log2(ref_um / small_um)
+        scale = HALO_UM * MATCH_SIZE * size / (ref_um / width) * (ref_um / gauge_um) ** MATCH_GROWTH
+        amount = amount * (1.0 + MATCH_AMOUNT * g)
+        colour = max(colour - MATCH_COLOUR * g, 0.0)
+    else:
+        scale = HALO_UM * size / (gauge_um / width)
+    stride = {3: 1, 2: 2, 1: 4, 0: 8}[quality]     # Ultra 256, Best 128, Good 64, Draft 32
+    n_taps = HALO_TAPS // stride
+    spread = 6.28318531 / (3.0 * math.sqrt(n_taps))
+    lin = [[threshold(di_decode(p[c]), thr) for c in range(3)] for p in frame]
     out = []
     for y in range(height):
         for x in range(width):
             c = frame[y * width + x]
-            if amount <= 0.0:
+            if amount <= 0.0 and bloom <= 0.0:
                 out.append(tuple(c))
                 continue
             h = hash32((((x & M32) * 0x8da6b343) & M32) ^ (((y & M32) * 0xd8163841) & M32))
             rot = (h >> 8) * (6.28318531 / 16777216.0)
             cr, sr = math.cos(rot), math.sin(rot)
-            total, n = 0.0, 0
-            for i in range((h & 3) % stride, HALO_TAPS, stride):
+            tot = [0.0, 0.0, 0.0]
+            n = 0
+            for i in range((h & 7) % stride, HALO_TAPS, stride):
                 r = radii[i] * scale
                 ox = cs[i] * cr - sn[i] * sr
                 oy = sn[i] * cr + cs[i] * sr
-                xx = min(max(x + int(math.floor(ox * r + 0.5)), 0), width - 1)
-                yy = min(max(y + int(math.floor(oy * r + 0.5)), 0), height - 1)
-                total += red[yy * width + xx]
-                n += 1
-            lr, lg = di_decode(c[0]), di_decode(c[1])
-            delta = amount * (total / n - threshold(lr, thr))
-            if delta == 0.0:
-                out.append(tuple(c))
-                continue
-            out.append((di_encode(lr + delta), di_encode(lg + colour * max(delta, 0.0)), c[2]))
+                d = spread * r
+                for k in (-1, 0, 1):
+                    xx = min(max(x + int(math.floor(ox * r - oy * d * k + 0.5)), 0), width - 1)
+                    yy = min(max(y + int(math.floor(oy * r + ox * d * k + 0.5)), 0), height - 1)
+                    t = lin[yy * width + xx]
+                    tot[0] += t[0]
+                    if bloom > 0.0:
+                        tot[1] += t[1]
+                        tot[2] += t[2]
+                    n += 1
+            l = [di_decode(v) for v in c]
+            own = [threshold(v, thr) for v in l]
+            blur = [tot[0] / n, tot[1] / n if bloom > 0.0 else own[1], tot[2] / n if bloom > 0.0 else own[2]]
+            dr, dg, db = blur[0] - own[0], blur[1] - own[1], blur[2] - own[2]
+            new = [l[0] + (amount + bloom) * dr, l[1] + amount * colour * max(dr, 0.0) + bloom * dg,
+                   l[2] + bloom * db]
+            out.append(tuple(c[k] if new[k] == l[k] else di_encode(new[k]) for k in range(3)))
     return out

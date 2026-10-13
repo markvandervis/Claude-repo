@@ -60,7 +60,7 @@ def write_enums():
     for lst in (m.INPUTS, m.NEGATIVES, m.PRINTS, m.OUTPUTS, m.WHITES, fx.GAUGES):
         lines.append("enum { %s };" % ", ".join("%s = %d" % (e[0], i) for i, e in enumerate(lst)))
     lines += ["enum { BB_OFF = 0, BB_AUTHENTIC = 1, BB_GRUNGE = 2 };", "enum { BS_PRINT = 0, BS_NEGATIVE = 1 };",
-              "enum { HE_DWG = 0, HE_ACESCCT = 1, HE_LINEAR = 2 };", "enum { HQ_DRAFT = 0, HQ_GOOD = 1, HQ_BEST = 2 };"]
+              "enum { HE_DWG = 0, HE_ACESCCT = 1, HE_LINEAR = 2 };", "enum { HQ_DRAFT = 0, HQ_GOOD = 1, HQ_BEST = 2, HQ_ULTRA = 3 };", "enum { HS_MATCHED = 0, HS_PHYSICAL = 1 };"]
     open(os.path.join(HERE, "mcf_enums.h"), "w").write("\n".join(lines) + "\n")
 
 
@@ -217,25 +217,31 @@ def disc_frame(w, h, r, level, bg):
     return fr
 
 
+SPECKLE = {}
+
+
 def test_halation():
     section("halation")
     w, h = 96, 64
     fr = disc_frame(w, h, 6, 16.0, 0.02)
-    check(np.array_equal(run("fx_halation", fr, w, h, uiHalAmount=0).reshape(-1, 3), np.array(fr)),
-          "Halation Amount 0 is bit exact")
+    check(np.array_equal(run("fx_halation", fr, w, h, uiHalAmount=0, uiBloom=0).reshape(-1, 3), np.array(fr)),
+          "Halation Amount 0 and Bloom 0 is bit exact")
 
-    for q in (0, 1, 2):
-        a = run("fx_halation", fr, w, h, uiQuality=q, uiHalAmount=0.4, uiHalSize=2.0, uiGauge=G16)
-        b = np.array(fx.halation_frame(fr, w, h, 0.4, 2.0, 0.2, 0.0, G16, q)).reshape(h, w, 3)
-        check(np.abs(a - b).max() < 2e-5, "DCTL == reference (quality %d, %.1e)" % (q, np.abs(a - b).max()))
+    for q, mode, bloom in ((0, 0, 0.25), (1, 1, 0.0), (2, 0, 0.6)):
+        a = run("fx_halation", fr, w, h, uiQuality=q, uiHalAmount=0.4, uiHalSize=1.5, uiGauge=G16,
+                uiHalColour=0.5, uiBloom=bloom, uiSizeMode=mode)
+        b = np.array(fx.halation_frame(fr, w, h, 0.4, 1.5, 0.5, 0.0, G16, q, bloom, mode == 0)).reshape(h, w, 3)
+        check(np.abs(a - b).max() < 2e-5, "DCTL == reference (quality %d, %s, bloom %.2f: %.1e)" %
+              (q, ("Matched", "Physical")[mode], bloom, np.abs(a - b).max()))
 
     flat = [(f32(m.di_encode(0.5)), f32(m.di_encode(0.3)), f32(m.di_encode(0.1)))] * (w * h)
-    o = run("fx_halation", flat, w, h, uiHalAmount=1.0)
+    o = run("fx_halation", flat, w, h, uiHalAmount=1.0, uiBloom=1.0)
     check(np.abs(o.reshape(-1, 3) - np.array(flat)).max() < 1e-6, "an even field is left untouched")
 
     W, H = 256, 256
     fr = disc_frame(W, H, 8, 32.0, 0.01)
-    o = run("fx_halation", fr, W, H, uiHalAmount=0.3, uiQuality=2, uiGauge=G16)
+    o = run("fx_halation", fr, W, H, uiHalAmount=0.3, uiQuality=2, uiGauge=G16, uiBloom=0, uiHalColour=0.2,
+            uiSizeMode=1)
     lin_in = np.vectorize(fx.di_decode)(np.array(fr).reshape(H, W, 3))
     lin_out = np.vectorize(fx.di_decode)(o)
     d = lin_out - lin_in
@@ -244,7 +250,11 @@ def test_halation():
     check(d[..., 0][halo].mean() > 0.05, "red halo around the highlight (+%.3f linear)" % d[..., 0][halo].mean())
     check(0.0 < d[..., 1][halo].mean() < d[..., 0][halo].mean() * 0.5, "the halo is red-orange (green %.0f %% of red)" %
           (100 * d[..., 1][halo].mean() / d[..., 0][halo].mean()))
-    check(np.array_equal(o[..., 2], np.array(fr).reshape(H, W, 3)[..., 2]), "blue is untouched")
+    check(np.array_equal(o[..., 2], np.array(fr).reshape(H, W, 3)[..., 2]), "with Bloom 0, blue is untouched")
+    ob = run("fx_halation", fr, W, H, uiHalAmount=0.3, uiQuality=2, uiGauge=G16, uiBloom=0.5, uiSizeMode=1)
+    db = np.vectorize(fx.di_decode)(ob) - lin_in
+    check(db[..., 2][halo].mean() > 0.02 and abs(np.vectorize(fx.di_decode)(ob)[..., 2].sum() - lin_in[..., 2].sum())
+          / lin_in[..., 2].sum() < 0.02, "Bloom adds a neutral glow (blue too), light still conserved")
     tot = lin_in[..., 0].sum()
     check(abs(lin_out[..., 0].sum() - tot) / tot < 0.02, "red light is redistributed, not added (%.2f %%)" %
           (100 * (lin_out[..., 0].sum() - tot) / tot))
@@ -256,14 +266,40 @@ def test_halation():
     rr = np.hypot(np.arange(P)[None, :] - P / 2 + 0.5, np.arange(P)[:, None] - P / 2 + 0.5)
     base = np.vectorize(fx.di_decode)(np.array(pt).reshape(P, P, 3))[..., 0]
 
-    def mean_radius(gauge):
-        o = run("fx_halation", pt, P, P, uiHalAmount=0.3, uiQuality=2, uiGauge=gauge)
+    def mean_radius(gauge, mode=1):
+        o = run("fx_halation", pt, P, P, uiHalAmount=0.3, uiQuality=2, uiGauge=gauge, uiBloom=0, uiSizeMode=mode)
         dd = np.maximum(np.vectorize(fx.di_decode)(o)[..., 0] - base, 0.0) * (rr > 2)
         return float((dd * rr).sum() / dd.sum())
     r35, r16 = mean_radius(S35), mean_radius(G16)
     expect = fx.GAUGES[S35][2] / fx.GAUGES[G16][2]
     check(abs(r16 / r35 / expect - 1.0) < 0.25,
-          "halo size follows the gauge: 16mm / Super 35 = %.2f (frame widths say %.2f)" % (r16 / r35, expect))
+          "Physical: halo size follows the gauge: 16mm / Super 35 = %.2f (frame widths say %.2f)" % (r16 / r35, expect))
+    m35, m8 = mean_radius(S35, 0), mean_radius(G8, 0)
+    check(1.0 < m8 / m35 < 1.3, "Matched: the glow keeps its on-screen size, 8mm / Super 35 = %.2f" % (m8 / m35))
+
+    # speckle: how even the glow is around a small light, on a 1080p-wide frame
+    # with the worst case reported from Resolve (8mm, Physical, Size 1)
+    SW, SH = 1920, 400
+    sp = disc_frame(SW, SH, 3.0, 40.0, 0.01)
+    rr2 = np.hypot(np.arange(SW)[None, :] - SW / 2 + 0.5, np.arange(SH)[:, None] - SH / 2 + 0.5)
+    base2 = np.vectorize(fx.di_decode)(np.array(sp).reshape(SH, SW, 3))[..., 0]
+    SPECKLE.clear()
+    for mode, q in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3)):
+        o = run("fx_halation", sp, SW, SH, uiHalAmount=0.3, uiQuality=q, uiGauge=G8, uiSizeMode=mode, uiBloom=0)
+        dd = np.vectorize(fx.di_decode)(o)[..., 0] - base2
+        # noise = deviation from the azimuthal mean at each radius
+        rb = np.floor(rr2).astype(int)
+        sel = (rr2 > 6) & (rr2 < 30)
+        prof = np.bincount(rb[sel], dd[sel]) / np.maximum(np.bincount(rb[sel]), 1)
+        resid = dd[sel] - prof[rb[sel]]
+        SPECKLE[(mode, q)] = resid.std() / dd[sel].mean()
+    for (mode, q), v in SPECKLE.items():
+        print("        speckle, 8mm %s, %s: %.0f %% of the glow" % (("Matched", "Physical")[mode],
+              ("Draft", "Good", "Best", "Ultra")[q], 100 * v))
+    check(SPECKLE[(0, 2)] < 0.6 * SPECKLE[(0, 1)] and SPECKLE[(0, 3)] < 0.6 * SPECKLE[(0, 2)] * 1.2,
+          "more quality, less speckle")
+    check(SPECKLE[(0, 3)] < 0.2, "Matched / Ultra: speckle around a small light below 20 %% (%.0f %%)" %
+          (100 * SPECKLE[(0, 3)]))
 
     dim = disc_frame(W, H, 8, 0.5, 0.01)
     o = run("fx_halation", dim, W, H, uiHalAmount=0.5, uiHalThreshold=3.0)

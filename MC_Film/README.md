@@ -119,16 +119,19 @@ Use the same Negative Stock on all Core and Grain nodes, and the same Gauge on G
   - Shadow Grain.
   - Grain Seed. A DCTL has no frame number, so keyframe Seed linearly from 0 on the first frame to the number of frames on the last to make the grain move.
 
-### MC Film Halation (`MC_Film-Halation-v0.2.dctl`), before the negative
+### MC Film Halation (`MC_Film-Halation-v0.3.dctl`), before the negative
 - **Physics:** light scattered back through the film base re-exposes mainly the red layer, giving the red-orange glow.
 - **Redistribution, not addition:** light is moved, not added. An even field is untouched, so the stock's measured response stays calibrated; red light is conserved to within 0.05%.
 - **Gauge:** the halo is sized on the film in micrometres, so it grows on smaller gauges.
 - **Controls:**
   - Halation Amount, Halation Size.
   - Halation Colour: red to orange.
+  - Bloom: neutral emulsion scatter, for a warm-white glow.
   - Highlight Threshold: 0 is physical.
-  - Gauge, and Quality (32 / 64 / 128 samples).
-- **Known DCTL limit:** around very small, very bright light sources the halo shows sampling speckle on Super 16 and Super 8. Use Quality Best there. Large highlights are smooth. The OFX version will use a real multi-pass blur.
+  - Gauge.
+  - Size Mode: Matched (default) keeps the on-screen size across gauges and warms small gauges; Physical fixes the halo on the film.
+  - Quality: 32 / 64 / 128 / 256 samples, each averaging three pixels.
+- **Known DCTL limit:** around very small, very bright lights a wide glow shows some speckle (8mm, 3-pixel light: Best 28%, Ultra 15%). Use Ultra for the final render. The OFX version will use a real multi-pass blur.
 
 ### Tests
 `python3 tests/test_film_effects.py` (after `tests/test_film_core.py`) runs 32 checks, including:

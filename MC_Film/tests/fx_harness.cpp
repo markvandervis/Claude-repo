@@ -23,8 +23,9 @@ static IntParam g_i[] = { { "uiBypass", &uiBypass }, { "uiNegative", &uiNegative
 #else
 static FloatParam g_f[] = {
     { "uiHalAmount", &uiHalAmount }, { "uiHalSize", &uiHalSize },
-    { "uiHalColour", &uiHalColour }, { "uiHalThreshold", &uiHalThreshold } };
+    { "uiHalColour", &uiHalColour }, { "uiHalThreshold", &uiHalThreshold }, { "uiBloom", &uiBloom } };
 static IntParam g_i[] = { { "uiBypass", &uiBypass }, { "uiInput", &uiInput }, { "uiGauge", &uiGauge },
+                          { "uiSizeMode", &uiSizeMode },
                           { "uiQuality", &uiQuality } };
 #endif
 

@@ -1,0 +1,365 @@
+// MarkCaptures MC Film Halation
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com
+
+// ============================================================================
+//  MC_Film-Halation-v0.3.dctl  -  MC Film Halation
+//  ---------------------------------------------------------------------------
+//  Halation for DaVinci Resolve Studio: light that passes through the
+//  emulsion, scatters in the film base and comes back to re-expose the
+//  emulsion from behind.  It mainly reaches the red-sensitive layer (the
+//  bottom one), which is why halation is the red-orange glow around bright
+//  highlights.
+//
+//  It acts on the scene exposure, so it goes BEFORE the negative:
+//
+//    [grade] -> [MC Film Halation] -> [MC Film Core] ...
+//
+//  REDISTRIBUTION, NOT ADDITION
+//  On a large even area the light scattered out of a point is replaced by
+//  light scattered in from its neighbours, and that balance is already part
+//  of the stock's measured response.  So the operator only moves light:
+//
+//      R' = R + (a + b) * (blur(T(R)) - T(R))
+//      G' = G + a * colour * max(blur(T(R)) - T(R), 0) + b * (blur(T(G)) - T(G))
+//      B' = B + b * (blur(T(B)) - T(B))
+//
+//  a is Halation (base scatter, red layer), b is Bloom (neutral scatter in
+//  the emulsion, irradiation).  An even field is left exactly as it is; near
+//  a bright edge the glow appears and the core gives up a little.  T is an
+//  optional soft highlight threshold (0 = physical, every level scatters).
+//
+//  SIZE MODES
+//  Physical: the halo has a fixed size on the film, so a small gauge, which
+//  is enlarged more, gets a bigger halo on screen.  Matched (default): the
+//  glow keeps about the same size on screen across gauges, growing a little
+//  and getting slightly stronger and warmer on small gauges - the behaviour
+//  of the commercial film plugins, calibrated in docs/PRESETS.md.
+//
+//  THE KERNEL
+//  Radially an exponential, with its scale set on the film in micrometres and
+//  converted to pixels by the gauge (frame width) and the timeline width, so
+//  the halo has the same size on the film at any resolution.  It is
+//  importance-sampled: the taps sit at the kernel's radial quantiles on a
+//  golden-angle spiral, all with equal weight, and the spiral is rotated per
+//  pixel so the sampling shows as fine noise instead of rings.
+//
+//  Version : 0.3
+//  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
+//            You may use this file for personal and commercial grading work.
+//            You may not redistribute, share, sell, sublicense or publish it,
+//            in whole or in part.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+//  UI
+// ----------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(uiHalAmount, Halation Amount, DCTLUI_SLIDER_FLOAT, 0.25, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHalAmount, "Fraction of the red layer's light scattered back through the base: the red-orange halo. In Matched size mode smaller gauges get a little more automatically.")
+DEFINE_UI_PARAMS(uiHalSize, Halation Size, DCTLUI_SLIDER_FLOAT, 1.0, 0.1, 4.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHalSize, "Halo radius. Matched: 1 is a typical 35mm halo and the size stays about the same on screen for every gauge. Physical: relative to a typical film base, fixed on the film, so smaller gauges get bigger halos.")
+DEFINE_UI_PARAMS(uiHalColour, Halation Colour, DCTLUI_SLIDER_FLOAT, 0.6, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHalColour, "How much of the scattered light also reaches the green layer: 0 is a deep red halo, higher values move it towards orange and yellow.")
+DEFINE_UI_PARAMS(uiBloom, Bloom, DCTLUI_SLIDER_FLOAT, 0.25, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiBloom, "Neutral light scatter in the emulsion (irradiation), on all three layers: the near-white part of a highlight glow. Together with Halation it gives a warm-white glow.")
+DEFINE_UI_PARAMS(uiHalThreshold, Highlight Threshold, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 6.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHalThreshold, "Stops above 18 % grey below which light does not scatter. 0 is physical (everything scatters, mostly visible at bright edges); raise it to keep the glow on the brightest highlights only.")
+
+DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
+
+DEFINE_UI_PARAMS(uiInput, Encoding, DCTLUI_COMBO_BOX, 0, {HE_DWG, HE_ACESCCT, HE_LINEAR}, {DaVinci WG Intermediate, ACES AP1 ACEScct, Scene Linear})
+DEFINE_UI_TOOLTIP(uiInput, "Encoding of this node's input; the output is in the same encoding.")
+DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, 4, {GAUGE_8, GAUGE_S8, GAUGE_16, GAUGE_S16, GAUGE_S35, GAUGE_65}, {8mm, Super 8, 16mm, Super 16, Super 35, 65mm})
+DEFINE_UI_TOOLTIP(uiGauge, "Film format. Use the same gauge as on MC Film Grain.")
+DEFINE_UI_PARAMS(uiSizeMode, Size Mode, DCTLUI_COMBO_BOX, 0, {HS_MATCHED, HS_PHYSICAL}, {Matched, Physical})
+DEFINE_UI_TOOLTIP(uiSizeMode, "Matched: the glow keeps about the same size on screen for every gauge and gets a little stronger and warmer on small gauges. Physical: the halo has a fixed size on the film, so it grows with the enlargement of small gauges, as on a real print.")
+DEFINE_UI_PARAMS(uiQuality, Quality, DCTLUI_COMBO_BOX, 2, {HQ_DRAFT, HQ_GOOD, HQ_BEST, HQ_ULTRA}, {Draft 32, Good 64, Best 128, Ultra 256})
+DEFINE_UI_TOOLTIP(uiQuality, "Number of samples of the glow (each averages three pixels). More is smoother and slower: Draft for playback, Ultra for the final render. Very small, very bright lights can still show some speckle - see the clean node-tree setup in the manual.")
+
+
+// ----------------------------------------------------------------------------
+//  CONSTANTS
+// ----------------------------------------------------------------------------
+
+#define MCH_HALO_UM         80.0f     // exponential scale of the halo on film
+#define MCH_MIDGRAY         0.184f
+#define MCH_TAPS_MAX        256
+#define MCH_MATCH_SIZE      2.0f   // Matched mode: Size 1 = this x the base halo on 35mm
+#define MCH_MATCH_GROWTH    0.07f // on-screen growth exponent towards small gauges
+#define MCH_MATCH_AMOUNT    0.2f // extra amount at the smallest gauge (8mm)
+#define MCH_MATCH_COLOUR    0.15f // colour shift towards red at the smallest gauge
+#define MCH_REF_WIDTH_UM    24890.0f // Super 35
+#define MCH_SMALL_WIDTH_UM  4800.0f // 8mm
+
+__CONSTANT__ float MCH_GAUGE_WIDTH_UM[6] = {
+    4800.0f, 5790.0f, 10260.0f, 12520.0f, 24890.0f, 52480.0f
+};
+__CONSTANT__ float MCH_TAP_RADIUS[256] = {
+    0.063272439f, 0.1113484f, 0.14537195f, 0.17361122f, 0.19846871f, 0.22104323f, 0.24194651f, 0.26156051f,
+    0.28014267f, 0.2978762f, 0.31489699f, 0.3313091f, 0.34719434f, 0.36261839f, 0.37763493f, 0.39228851f,
+    0.40661659f, 0.42065103f, 0.43441917f, 0.44794472f, 0.46124841f, 0.47434843f, 0.48726092f, 0.50000024f,
+    0.51257925f, 0.52500952f, 0.53730151f, 0.5494647f, 0.56150775f, 0.57343856f, 0.58526439f, 0.59699192f,
+    0.6086273f, 0.62017625f, 0.63164407f, 0.64303569f, 0.65435571f, 0.66560843f, 0.67679788f, 0.68792784f,
+    0.69900188f, 0.71002335f, 0.72099542f, 0.7319211f, 0.74280321f, 0.75364448f, 0.76444745f, 0.77521457f,
+    0.78594817f, 0.79665049f, 0.80732364f, 0.81796966f, 0.82859052f, 0.83918809f, 0.84976418f, 0.86032052f,
+    0.8708588f, 0.88138064f, 0.89188759f, 0.90238117f, 0.91286285f, 0.92333405f, 0.93379616f, 0.9442505f,
+    0.95469839f, 0.96514111f, 0.97557988f, 0.98601593f, 0.99645043f, 1.0068845f, 1.0173194f, 1.0277561f,
+    1.0381957f, 1.0486394f, 1.0590881f, 1.0695429f, 1.0800048f, 1.0904749f, 1.100954f, 1.1114432f,
+    1.1219435f, 1.1324557f, 1.1429809f, 1.15352f, 1.1640738f, 1.1746434f, 1.1852296f, 1.1958334f,
+    1.2064556f, 1.2170972f, 1.227759f, 1.2384419f, 1.2491468f, 1.2598746f, 1.2706263f, 1.2814026f,
+    1.2922045f, 1.3030328f, 1.3138884f, 1.3247723f, 1.3356853f, 1.3466283f, 1.3576022f, 1.368608f,
+    1.3796464f, 1.3907185f, 1.4018251f, 1.4129673f, 1.4241458f, 1.4353616f, 1.4466157f, 1.4579091f,
+    1.4692427f, 1.4806174f, 1.4920343f, 1.5034944f, 1.5149986f, 1.5265479f, 1.5381435f, 1.5497863f,
+    1.5614774f, 1.5732178f, 1.5850087f, 1.5968511f, 1.6087461f, 1.620695f, 1.6326988f, 1.6447586f,
+    1.6568758f, 1.6690514f, 1.6812868f, 1.6935831f, 1.7059417f, 1.7183638f, 1.7308507f, 1.7434039f,
+    1.7560245f, 1.7687142f, 1.7814742f, 1.794306f, 1.8072111f, 1.8201911f, 1.8332474f, 1.8463817f,
+    1.8595955f, 1.8728906f, 1.8862685f, 1.899731f, 1.91328f, 1.9269171f, 1.9406443f, 1.9544634f,
+    1.9683765f, 1.9823854f, 1.9964922f, 2.0106991f, 2.0250082f, 2.0394216f, 2.0539418f, 2.0685709f,
+    2.0833114f, 2.0981658f, 2.1131366f, 2.1282264f, 2.1434378f, 2.1587737f, 2.1742369f, 2.1898304f,
+    2.2055571f, 2.2214201f, 2.2374227f, 2.2535682f, 2.2698601f, 2.2863018f, 2.302897f, 2.3196495f,
+    2.3365632f, 2.3536421f, 2.3708905f, 2.3883126f, 2.405913f, 2.4236962f, 2.4416672f, 2.459831f,
+    2.4781926f, 2.4967576f, 2.5155316f, 2.5345203f, 2.5537299f, 2.5731667f, 2.5928372f, 2.6127483f,
+    2.6329072f, 2.6533213f, 2.6739984f, 2.6949467f, 2.7161747f, 2.7376913f, 2.7595058f, 2.7816281f,
+    2.8040683f, 2.8268373f, 2.8499462f, 2.8734072f, 2.8972325f, 2.9214355f, 2.9460301f, 2.9710308f,
+    2.9964531f, 3.0223135f, 3.0486293f, 3.0754189f, 3.1027017f, 3.1304984f, 3.1588312f, 3.1877235f,
+    3.2172003f, 3.2472883f, 3.2780162f, 3.3094146f, 3.3415164f, 3.3743571f, 3.4079746f, 3.4424101f,
+    3.4777081f, 3.5139167f, 3.5510883f, 3.5892798f, 3.6285535f, 3.6689774f, 3.7106261f, 3.7535818f,
+    3.7979354f, 3.8437874f, 3.8912496f, 3.940447f, 3.9915197f, 4.0446255f, 4.099943f, 4.1576756f,
+    4.2180563f, 4.2813536f, 4.3478789f, 4.4179971f, 4.4921384f, 4.5708161f, 4.6546486f, 4.7443907f,
+    4.8409775f, 4.9455858f, 5.0597269f, 5.1853865f, 5.3252471f, 5.4830593f, 5.6642991f, 5.877424f
+};
+__CONSTANT__ float MCH_TAP_COS[256] = {
+    1.0f, -0.73736888f, 0.087425725f, 0.60843886f, -0.98471349f, 0.84375529f, -0.2596043f, -0.46090702f,
+    0.9393213f, -0.92434556f, 0.423846f, 0.29928386f, -0.86521121f, 0.97667577f, -0.57512943f, -0.12851069f,
+    0.764649f, -0.99914605f, 0.70882941f, -0.046191446f, -0.64070914f, 0.99106941f, -0.82085834f, 0.21948137f,
+    0.49718087f, -0.95269278f, 0.90779113f, -0.38606108f, -0.33845228f, 0.88518944f, -0.96697001f, 0.54083774f,
+    0.16937617f, -0.79062317f, 0.99658567f, -0.67907935f, 0.0048782772f, 0.67188517f, -0.9957327f, 0.79655944f,
+    -0.17898358f, -0.53260559f, 0.96443716f, -0.8896863f, 0.34761682f, 0.37704265f, -0.90365586f, 0.95561276f,
+    -0.50562236f, -0.20995238f, 0.81524706f, -0.99232323f, 0.64816948f, 0.036443223f, -0.70191368f, 0.99869538f,
+    -0.77090011f, 0.13818011f, 0.56712068f, -0.97453439f, 0.87006198f, -0.30857886f, -0.41498908f, 0.92057893f,
+    -0.94262342f, 0.46954342f, 0.25017001f, -0.83847858f, 0.98636601f, -0.61615262f, -0.077702482f, 0.7307434f,
+    -0.9999524f, 0.74392416f, -0.097140645f, -0.60066719f, 0.98296722f, -0.84895169f, 0.26901389f, 0.45222675f,
+    -0.93592975f, 0.92802419f, -0.43266256f, -0.28996038f, 0.86027808f, -0.97872419f, 0.58308343f, 0.11882903f,
+    -0.75832509f, 0.99950161f, -0.71567767f, 0.055935272f, 0.63318782f, -0.98972125f, 0.82639148f, -0.22898947f,
+    -0.48869207f, 0.94968211f, -0.91184f, 0.39504276f, 0.32925552f, -0.88060831f, 0.9694108f, -0.5490184f,
+    -0.15975264f, 0.78461165f, -0.99734378f, 0.68620888f, -0.014634367f, -0.66462703f, 0.99478494f, -0.80241988f,
+    0.18857396f, 0.52432275f, -0.96181251f, 0.89409848f, -0.35674827f, -0.36798834f, 0.89943456f, -0.95844177f,
+    0.5140157f, 0.2004034f, -0.80955817f, 0.9934826f, -0.65556812f, -0.026691531f, 0.69493113f, -0.99814965f,
+    0.77707784f, -0.14783638f, -0.55905795f, 0.97230024f, -0.87482993f, 0.31784449f, 0.40609267f, -0.91672467f,
+    0.94583582f, -0.47813513f, -0.2407119f, 0.83312205f, -0.98792465f, 0.62380773f, 0.067971844f, -0.72404837f,
+    0.99980962f, -0.75040863f, 0.10684632f, 0.59283833f, -0.98112739f, 0.85406727f, -0.27839786f, -0.44350343f,
+    0.93244912f, -0.93161449f, 0.44143794f, 0.28060929f, -0.85526306f, 0.98067943f, -0.59098193f, -0.10913607f,
+    0.75192901f, -0.99976203f, 0.72245781f, -0.065673773f, -0.62560621f, 0.98827888f, -0.83184596f, 0.23847577f,
+    0.48015674f, -0.94658104f, 0.91580206f, -0.40398683f, -0.32002742f, 0.87594336f, -0.97175932f, 0.5571468f,
+    0.1501139f, -0.77852543f, 0.99800695f, -0.6932731f, 0.024389064f, 0.65730563f, -0.99374249f, 0.80820394f,
+    -0.19814638f, -0.51599f, 0.95909631f, -0.89842554f, 0.36584576f, 0.35889899f, -0.89512765f, 0.96117955f,
+    -0.52236013f, -0.19083535f, 0.80379222f, -0.99454739f, 0.66290436f, 0.016937299f, -0.68788243f, 0.9975089f,
+    -0.7831816f, 0.15747858f, 0.550942f, -0.96997354f, 0.87951461f, -0.32707986f, -0.39715759f, 0.91278315f,
+    -0.94895819f, 0.48668132f, 0.23123088f, -0.82768622f, 0.98938924f, -0.63140345f, -0.058234735f, 0.71728441f,
+    -0.99957167f, 0.75682167f, -0.11654182f, -0.58495305f, 0.97919416f, -0.85910156f, 0.28775534f, 0.43473789f,
+    -0.92887973f, 0.93511611f, -0.45017131f, -0.27123149f, 0.85016662f, -0.98254133f, 0.59882417f, 0.099432712f,
+    -0.74546135f, 0.99992728f, -0.72916917f, 0.075406023f, 0.61796506f, -0.98674243f, 0.83722126f, -0.24793937f,
+    -0.47157571f, 0.94338987f, -0.91967695f, 0.41289245f, 0.31076886f, -0.87119503f, 0.97401534f, -0.56522217f,
+    -0.14046087f, 0.77236511f, -0.99857512f, 0.70027133f, -0.034141439f, -0.64992166f, 0.99260544f, -0.81391107f
+};
+__CONSTANT__ float MCH_TAP_SIN[256] = {
+    0.0f, 0.67549029f, -0.99617104f, 0.79360075f, -0.17418195f, -0.53672805f, 0.96571507f, -0.88744843f,
+    0.34303863f, 0.38155641f, -0.90573427f, 0.95416412f, -0.50140758f, -0.21471943f, 0.81806243f, -0.99170812f,
+    0.64444698f, 0.041317826f, -0.70537994f, 0.99893261f, -0.76778369f, 0.13334699f, 0.57113185f, -0.97561669f,
+    0.86764692f, -0.30393498f, -0.41942253f, 0.92247322f, -0.94098356f, 0.46523076f, 0.25489019f, -0.84112695f,
+    0.98555148f, -0.61230303f, -0.082565086f, 0.73406488f, -0.9999881f, 0.74065533f, -0.092284283f, -0.60456022f,
+    0.98385206f, -0.84636356f, 0.26431224f, 0.45657232f, -0.93763668f, 0.9261959f, -0.42825937f, -0.29462563f,
+    0.86275491f, -0.97771161f, 0.57911332f, 0.12367133f, -0.76149611f, 0.99933573f, -0.71226202f, 0.051063966f,
+    0.63695606f, -0.99040712f, 0.82363471f, -0.22423809f, -0.49294234f, 0.95119876f, -0.90982639f, 0.39055657f,
+    0.33385787f, -0.88290938f, 0.96820192f, -0.54493455f, -0.16456636f, 0.78762678f, -0.99697659f, 0.68265224f,
+    -0.0097564382f, -0.66826405f, 0.99527066f, -0.79949918f, 0.18378096f, 0.52847046f, -0.9631363f, 0.891903f,
+    -0.35218673f, -0.37251993f, 0.90155594f, -0.95703865f, 0.5098251f, 0.20518033f, -0.81241228f, 0.99291473f,
+    -0.65187656f, -0.031567753f, 0.69843072f, -0.9984344f, 0.77399818f, -0.14300995f, -0.56309601f, 0.9734289f,
+    -0.87245634f, 0.3132154f, 0.41054576f, -0.91866273f, 0.94424086f, -0.47384491f, -0.24544388f, 0.83581026f,
+    -0.98715708f, 0.61998755f, 0.07283803f, -0.72740454f, 0.99989291f, -0.74717529f, 0.1019947f, 0.59675986f,
+    -0.98205899f, 0.85151961f, -0.27370913f, -0.44787042f, 0.93420055f, -0.92983041f, 0.43705545f, 0.28528823f,
+    -0.85778077f, 0.97971347f, -0.58703967f, -0.11398391f, 0.75513604f, -0.99964372f, 0.7190763f, -0.060805246f,
+    -0.6294045f, 0.98901183f, -0.82912859f, 0.2337354f, 0.48443017f, -0.94814286f, 0.9138319f, -0.39951955f,
+    -0.32464534f, 0.87828629f, -0.97059661f, 0.55308918f, 0.15493511f, -0.78157784f, 0.99768724f, -0.6897492f,
+    0.019511948f, 0.66097419f, -0.99427555f, 0.8053215f, -0.19336247f, -0.52016256f, 0.96046584f, -0.89627267f,
+    0.36130131f, 0.36344799f, -0.89729178f, 0.95982208f, -0.51819408f, -0.1956217f, 0.8066848f, -0.99402682f,
+    0.65924409f, 0.021814675f, -0.69141501f, 0.99784115f, -0.780139f, 0.1526593f, 0.55500658f, -0.97114845f,
+    0.87718271f, -0.32246601f, -0.40162991f, 0.9147648f, -0.94740828f, 0.48241396f, 0.2359742f, -0.83041402f,
+    0.98866871f, -0.62761306f, -0.06310404f, 0.72067497f, -0.99970254f, 0.75362412f, -0.1116954f, -0.5889027f,
+    0.98017244f, -0.85659461f, 0.28307997f, 0.43912589f, -0.9306755f, 0.93337641f, -0.44580993f, -0.27592367f,
+    0.85272498f, -0.98162206f, 0.59491013f, 0.10428563f, -0.74870409f, 0.99985655f, -0.72582212f, 0.070540737f,
+    0.62179304f, -0.9875224f, 0.83454354f, -0.24321046f, -0.47587189f, 0.9449967f, -0.91775043f, 0.4084445f,
+    0.3154019f, -0.87357959f, 0.97289891f, -0.56119116f, -0.14528911f, 0.7754545f, -0.99830292f, 0.6967805f,
+    -0.0292656f, -0.65362142f, 0.99318579f, -0.81106716f, 0.20292557f, 0.51180515f, -0.95770395f, 0.90055703f,
+    -0.3703815f, -0.35434145f, 0.89294221f, -0.96251415f, 0.52651374f, 0.18604446f, -0.80088052f, 0.99504429f,
+    -0.66654886f, -0.01205952f, 0.68433349f, -0.99715291f, 0.78620556f, -0.16229411f, -0.54686431f, 0.96877555f,
+    -0.88182558f, 0.33168592f, 0.39267583f, -0.91077979f, 0.95048552f, -0.49093709f, -0.22648206f, 0.82493873f,
+    -0.99008623f, 0.63517882f, 0.053364043f, -0.71387679f, 0.99941701f, -0.76000121f, 0.12138547f, 0.58098948f
+};
+
+
+
+// ----------------------------------------------------------------------------
+//  ENCODINGS
+// ----------------------------------------------------------------------------
+
+__DEVICE__ float MchDiDecode(float y)
+{
+    if (y > 0.02740668f) return _exp2f(_fminf(y, 5.0f) / 0.07329248f - 7.0f) - 0.0075f;
+    return y / 10.44426855f;
+}
+
+__DEVICE__ float MchDiEncode(float x)
+{
+    if (x > 0.00262409f) return (_log2f(x + 0.0075f) + 7.0f) * 0.07329248f;
+    return x * 10.44426855f;
+}
+
+__DEVICE__ float MchCctDecode(float y)
+{
+    if (y > 0.155251141552511f) return _exp2f(_fminf(y, 4.0f) * 17.52f - 9.72f);
+    return (y - 0.0729055341958355f) / 10.5402377416545f;
+}
+
+__DEVICE__ float MchCctEncode(float x)
+{
+    if (x <= 0.0078125f) return 10.5402377416545f * x + 0.0729055341958355f;
+    return (_log2f(x) + 9.72f) / 17.52f;
+}
+
+__DEVICE__ float MchDecode(float v, int enc)
+{
+    if (enc == HE_DWG) return MchDiDecode(v);
+    if (enc == HE_ACESCCT) return MchCctDecode(v);
+    return v;
+}
+
+__DEVICE__ float MchEncode(float v, int enc)
+{
+    if (enc == HE_DWG) return MchDiEncode(v);
+    if (enc == HE_ACESCCT) return MchCctEncode(v);
+    return v;
+}
+
+__DEVICE__ unsigned int MchHash(unsigned int x)
+{
+    x ^= x >> 16; x *= 0x7feb352dU;
+    x ^= x >> 15; x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return x;
+}
+
+
+// ----------------------------------------------------------------------------
+//  OPERATOR  (plain arguments)
+// ----------------------------------------------------------------------------
+
+// Soft highlight threshold, in linear light: 0 below `thr`, then rising with
+// a smooth (C1) knee one stop wide into a straight line of slope 1.  thr = 0
+// is the identity.
+__DEVICE__ float MchThreshold(float v, float thr)
+{
+    if (thr <= 0.0f) return v;
+    float k = thr;                         // knee width
+    float x = v - thr;
+    if (x <= 0.0f) return 0.0f;
+    if (x >= k) return x - 0.5f * k;
+    return x * x / (2.0f * k);
+}
+
+// Halation (red layer, a little green) and bloom (all layers) applied to the
+// linear pixel, given the blurred thresholded channels.  Both only move light:
+// an even field, where blur(T) == T, is left exactly as it is.
+__DEVICE__ float3 MchHalate(float3 lin, float3 blurred, float amount, float colour, float bloom, float thr)
+{
+    float dr = blurred.x - MchThreshold(lin.x, thr);
+    float dg = blurred.y - MchThreshold(lin.y, thr);
+    float db = blurred.z - MchThreshold(lin.z, thr);
+    return make_float3(lin.x + (amount + bloom) * dr,
+                       lin.y + amount * colour * _fmaxf(dr, 0.0f) + bloom * dg,
+                       lin.z + bloom * db);
+}
+
+__DEVICE__ int MchClampI(int v, int hi)
+{
+    return v < 0 ? 0 : (v > hi ? hi : v);
+}
+
+
+// ----------------------------------------------------------------------------
+//  ENTRY POINT  (texture reads: Resolve specific)
+// ----------------------------------------------------------------------------
+
+// NOTE: Resolve parses this declaration with a line-based matcher.  It must
+// stay on ONE line, in exactly this form, or Resolve reports "wrong argument".
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB)
+{
+    float3 c = make_float3(_tex2D(p_TexR, p_X, p_Y), _tex2D(p_TexG, p_X, p_Y), _tex2D(p_TexB, p_X, p_Y));
+    if (uiBypass || (uiHalAmount <= 0.0f && uiBloom <= 0.0f)) return c;
+
+    float thr = (uiHalThreshold > 0.0f) ? MCH_MIDGRAY * _exp2f(uiHalThreshold) : 0.0f;
+    float gaugeUm = MCH_GAUGE_WIDTH_UM[uiGauge];
+    float amount = uiHalAmount, colour = uiHalColour, scalePx;
+    if (uiSizeMode == HS_MATCHED)
+    {
+        // g = 0 on Super 35, 1 on 8mm (log of the enlargement), < 0 on 65mm
+        float g = _log2f(MCH_REF_WIDTH_UM / gaugeUm) / _log2f(MCH_REF_WIDTH_UM / MCH_SMALL_WIDTH_UM);
+        scalePx = MCH_HALO_UM * MCH_MATCH_SIZE * uiHalSize / (MCH_REF_WIDTH_UM / (float)p_Width) *
+                  _powf(MCH_REF_WIDTH_UM / gaugeUm, MCH_MATCH_GROWTH);
+        amount *= 1.0f + MCH_MATCH_AMOUNT * g;
+        colour = _fmaxf(colour - MCH_MATCH_COLOUR * g, 0.0f);
+    }
+    else scalePx = MCH_HALO_UM * uiHalSize / (gaugeUm / (float)p_Width);
+
+    int stride = (uiQuality == HQ_ULTRA) ? 1 : ((uiQuality == HQ_BEST) ? 2 : ((uiQuality == HQ_GOOD) ? 4 : 8));
+    int nTaps = MCH_TAPS_MAX / stride;
+    // Each tap averages three pixels along the tangent, spread over the gap to
+    // the neighbouring taps (about 2 pi r / sqrt(n) on a golden-angle spiral),
+    // so a small bright source is caught by the taps around it instead of by
+    // one or none of them.
+    float spread = 6.28318531f / (3.0f * _sqrtf((float)nTaps));
+    unsigned int h = MchHash((unsigned int)p_X * 0x8da6b343U ^ (unsigned int)p_Y * 0xd8163841U);
+    float rot = (float)(h >> 8) * (6.28318531f / 16777216.0f);
+    float cr = _cosf(rot), sr = _sinf(rot);
+    int bloomOn = uiBloom > 0.0f;
+
+    float sr_ = 0.0f, sg = 0.0f, sb = 0.0f;
+    int n = 0;
+    for (int i = (int)(h & 7U) % stride; i < MCH_TAPS_MAX; i += stride)
+    {
+        float r  = MCH_TAP_RADIUS[i] * scalePx;
+        float ox = MCH_TAP_COS[i] * cr - MCH_TAP_SIN[i] * sr;
+        float oy = MCH_TAP_SIN[i] * cr + MCH_TAP_COS[i] * sr;
+        float d  = spread * r;
+        for (int k = -1; k <= 1; ++k)
+        {
+            int x = MchClampI(p_X + (int)_floor(ox * r - oy * d * (float)k + 0.5f), p_Width - 1);
+            int y = MchClampI(p_Y + (int)_floor(oy * r + ox * d * (float)k + 0.5f), p_Height - 1);
+            sr_ += MchThreshold(MchDecode(_tex2D(p_TexR, x, y), uiInput), thr);
+            if (bloomOn)
+            {
+                sg += MchThreshold(MchDecode(_tex2D(p_TexG, x, y), uiInput), thr);
+                sb += MchThreshold(MchDecode(_tex2D(p_TexB, x, y), uiInput), thr);
+            }
+            n += 1;
+        }
+    }
+
+    float3 lin = make_float3(MchDecode(c.x, uiInput), MchDecode(c.y, uiInput), MchDecode(c.z, uiInput));
+    float inv = 1.0f / (float)n;
+    float3 blurred = make_float3(sr_ * inv,
+                                 bloomOn ? sg * inv : MchThreshold(lin.y, thr),
+                                 bloomOn ? sb * inv : MchThreshold(lin.z, thr));
+    float3 hal = MchHalate(lin, blurred, amount, colour, uiBloom, thr);
+    if (hal.x == lin.x && hal.y == lin.y && hal.z == lin.z) return c;   // nothing scattered: bit exact
+    return make_float3(hal.x == lin.x ? c.x : MchEncode(hal.x, uiInput),
+                       hal.y == lin.y ? c.y : MchEncode(hal.y, uiInput),
+                       hal.z == lin.z ? c.z : MchEncode(hal.z, uiInput));
+}
+
+// MarkCaptures MC Film Halation
+// © 2026 Mark van der Vis / MarkCaptures
+// www.markcaptures.com

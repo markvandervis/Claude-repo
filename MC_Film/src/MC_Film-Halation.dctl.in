@@ -20,11 +20,21 @@
 //  light scattered in from its neighbours, and that balance is already part
 //  of the stock's measured response.  So the operator only moves light:
 //
-//      R' = R + a * (blur(T(R)) - T(R))
+//      R' = R + (a + b) * (blur(T(R)) - T(R))
+//      G' = G + a * colour * max(blur(T(R)) - T(R), 0) + b * (blur(T(G)) - T(G))
+//      B' = B + b * (blur(T(B)) - T(B))
 //
-//  An even field is left exactly as it is; near a bright edge the red layer
-//  gains a halo and the core gives up a little.  T is an optional soft
-//  highlight threshold (0 = physical, every level scatters).
+//  a is Halation (base scatter, red layer), b is Bloom (neutral scatter in
+//  the emulsion, irradiation).  An even field is left exactly as it is; near
+//  a bright edge the glow appears and the core gives up a little.  T is an
+//  optional soft highlight threshold (0 = physical, every level scatters).
+//
+//  SIZE MODES
+//  Physical: the halo has a fixed size on the film, so a small gauge, which
+//  is enlarged more, gets a bigger halo on screen.  Matched (default): the
+//  glow keeps about the same size on screen across gauges, growing a little
+//  and getting slightly stronger and warmer on small gauges - the behaviour
+//  of the commercial film plugins, calibrated in docs/PRESETS.md.
 //
 //  THE KERNEL
 //  Radially an exponential, with its scale set on the film in micrometres and
@@ -47,13 +57,15 @@
 // ----------------------------------------------------------------------------
 
 DEFINE_UI_PARAMS(uiHalAmount, Halation Amount, DCTLUI_SLIDER_FLOAT, 0.25, 0.0, 1.0, 0.01)
-DEFINE_UI_TOOLTIP(uiHalAmount, "Fraction of the red layer's light that is scattered back through the base. Modern cine stocks with an anti-halation backing are around 0.1 - 0.3; a stock without it can reach 0.6.")
+DEFINE_UI_TOOLTIP(uiHalAmount, "Fraction of the red layer's light scattered back through the base: the red-orange halo. In Matched size mode smaller gauges get a little more automatically.")
 DEFINE_UI_PARAMS(uiHalSize, Halation Size, DCTLUI_SLIDER_FLOAT, 1.0, 0.1, 4.0, 0.01)
-DEFINE_UI_TOOLTIP(uiHalSize, "Halo radius relative to a typical film base. It is set on the film, so a smaller gauge gives a bigger halo on screen; lower it on small gauges for a halo that keeps its size on screen.")
-DEFINE_UI_PARAMS(uiHalColour, Halation Colour, DCTLUI_SLIDER_FLOAT, 0.2, 0.0, 0.6, 0.01)
-DEFINE_UI_TOOLTIP(uiHalColour, "How much of the scattered light also reaches the green layer: 0 is a deep red halo, higher values move it towards orange.")
+DEFINE_UI_TOOLTIP(uiHalSize, "Halo radius. Matched: 1 is a typical 35mm halo and the size stays about the same on screen for every gauge. Physical: relative to a typical film base, fixed on the film, so smaller gauges get bigger halos.")
+DEFINE_UI_PARAMS(uiHalColour, Halation Colour, DCTLUI_SLIDER_FLOAT, 0.6, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHalColour, "How much of the scattered light also reaches the green layer: 0 is a deep red halo, higher values move it towards orange and yellow.")
+DEFINE_UI_PARAMS(uiBloom, Bloom, DCTLUI_SLIDER_FLOAT, 0.25, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiBloom, "Neutral light scatter in the emulsion (irradiation), on all three layers: the near-white part of a highlight glow. Together with Halation it gives a warm-white glow.")
 DEFINE_UI_PARAMS(uiHalThreshold, Highlight Threshold, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 6.0, 0.1)
-DEFINE_UI_TOOLTIP(uiHalThreshold, "Stops above 18 % grey below which light does not scatter. 0 is physical (everything scatters, mostly visible at bright edges); raise it to keep halation on the brightest highlights only.")
+DEFINE_UI_TOOLTIP(uiHalThreshold, "Stops above 18 % grey below which light does not scatter. 0 is physical (everything scatters, mostly visible at bright edges); raise it to keep the glow on the brightest highlights only.")
 
 DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
@@ -61,9 +73,11 @@ DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
 DEFINE_UI_PARAMS(uiInput, Encoding, DCTLUI_COMBO_BOX, 0, {HE_DWG, HE_ACESCCT, HE_LINEAR}, {DaVinci WG Intermediate, ACES AP1 ACEScct, Scene Linear})
 DEFINE_UI_TOOLTIP(uiInput, "Encoding of this node's input; the output is in the same encoding.")
 DEFINE_UI_PARAMS(uiGauge, Gauge, DCTLUI_COMBO_BOX, @@GAUGE_DEFAULT@@, {@@GAUGE_ENUMS@@}, {@@GAUGE_NAMES@@})
-DEFINE_UI_TOOLTIP(uiGauge, "Film format: sets how big the halo is on screen. Use the same gauge as on MC Film Grain.")
-DEFINE_UI_PARAMS(uiQuality, Quality, DCTLUI_COMBO_BOX, 1, {HQ_DRAFT, HQ_GOOD, HQ_BEST}, {Draft 32, Good 64, Best 128})
-DEFINE_UI_TOOLTIP(uiQuality, "Number of samples of the halo. More is smoother and slower.")
+DEFINE_UI_TOOLTIP(uiGauge, "Film format. Use the same gauge as on MC Film Grain.")
+DEFINE_UI_PARAMS(uiSizeMode, Size Mode, DCTLUI_COMBO_BOX, 0, {HS_MATCHED, HS_PHYSICAL}, {Matched, Physical})
+DEFINE_UI_TOOLTIP(uiSizeMode, "Matched: the glow keeps about the same size on screen for every gauge and gets a little stronger and warmer on small gauges. Physical: the halo has a fixed size on the film, so it grows with the enlargement of small gauges, as on a real print.")
+DEFINE_UI_PARAMS(uiQuality, Quality, DCTLUI_COMBO_BOX, 2, {HQ_DRAFT, HQ_GOOD, HQ_BEST, HQ_ULTRA}, {Draft 32, Good 64, Best 128, Ultra 256})
+DEFINE_UI_TOOLTIP(uiQuality, "Number of samples of the glow (each averages three pixels). More is smoother and slower: Draft for playback, Ultra for the final render. Very small, very bright lights can still show some speckle - see the clean node-tree setup in the manual.")
 
 
 // ----------------------------------------------------------------------------
@@ -73,6 +87,12 @@ DEFINE_UI_TOOLTIP(uiQuality, "Number of samples of the halo. More is smoother an
 #define MCH_HALO_UM         @@HALO_UM@@f     // exponential scale of the halo on film
 #define MCH_MIDGRAY         0.184f
 #define MCH_TAPS_MAX        @@HALO_TAPS@@
+#define MCH_MATCH_SIZE      @@MATCH_SIZE@@f   // Matched mode: Size 1 = this x the base halo on 35mm
+#define MCH_MATCH_GROWTH    @@MATCH_GROWTH@@f // on-screen growth exponent towards small gauges
+#define MCH_MATCH_AMOUNT    @@MATCH_AMOUNT@@f // extra amount at the smallest gauge (8mm)
+#define MCH_MATCH_COLOUR    @@MATCH_COLOUR@@f // colour shift towards red at the smallest gauge
+#define MCH_REF_WIDTH_UM    @@REF_WIDTH_UM@@f // Super 35
+#define MCH_SMALL_WIDTH_UM  @@SMALL_WIDTH_UM@@f // 8mm
 
 @@HALO_TABLES@@
 
@@ -145,12 +165,22 @@ __DEVICE__ float MchThreshold(float v, float thr)
     return x * x / (2.0f * k);
 }
 
-// Halation applied to linear red / green, given the blurred (thresholded) red.
-__DEVICE__ float3 MchHalate(float3 lin, float blurred, float amount, float colour, float thr)
+// Halation (red layer, a little green) and bloom (all layers) applied to the
+// linear pixel, given the blurred thresholded channels.  Both only move light:
+// an even field, where blur(T) == T, is left exactly as it is.
+__DEVICE__ float3 MchHalate(float3 lin, float3 blurred, float amount, float colour, float bloom, float thr)
 {
-    float own = MchThreshold(lin.x, thr);
-    float delta = amount * (blurred - own);
-    return make_float3(lin.x + delta, lin.y + colour * _fmaxf(delta, 0.0f), lin.z);
+    float dr = blurred.x - MchThreshold(lin.x, thr);
+    float dg = blurred.y - MchThreshold(lin.y, thr);
+    float db = blurred.z - MchThreshold(lin.z, thr);
+    return make_float3(lin.x + (amount + bloom) * dr,
+                       lin.y + amount * colour * _fmaxf(dr, 0.0f) + bloom * dg,
+                       lin.z + bloom * db);
+}
+
+__DEVICE__ int MchClampI(int v, int hi)
+{
+    return v < 0 ? 0 : (v > hi ? hi : v);
 }
 
 
@@ -163,36 +193,66 @@ __DEVICE__ float3 MchHalate(float3 lin, float blurred, float amount, float colou
 __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB)
 {
     float3 c = make_float3(_tex2D(p_TexR, p_X, p_Y), _tex2D(p_TexG, p_X, p_Y), _tex2D(p_TexB, p_X, p_Y));
-    if (uiBypass || uiHalAmount <= 0.0f) return c;
+    if (uiBypass || (uiHalAmount <= 0.0f && uiBloom <= 0.0f)) return c;
 
     float thr = (uiHalThreshold > 0.0f) ? MCH_MIDGRAY * _exp2f(uiHalThreshold) : 0.0f;
-    float footUm = MCH_GAUGE_WIDTH_UM[uiGauge] / (float)p_Width;
-    float scalePx = MCH_HALO_UM * uiHalSize / footUm;          // exponential scale in pixels
+    float gaugeUm = MCH_GAUGE_WIDTH_UM[uiGauge];
+    float amount = uiHalAmount, colour = uiHalColour, scalePx;
+    if (uiSizeMode == HS_MATCHED)
+    {
+        // g = 0 on Super 35, 1 on 8mm (log of the enlargement), < 0 on 65mm
+        float g = _log2f(MCH_REF_WIDTH_UM / gaugeUm) / _log2f(MCH_REF_WIDTH_UM / MCH_SMALL_WIDTH_UM);
+        scalePx = MCH_HALO_UM * MCH_MATCH_SIZE * uiHalSize / (MCH_REF_WIDTH_UM / (float)p_Width) *
+                  _powf(MCH_REF_WIDTH_UM / gaugeUm, MCH_MATCH_GROWTH);
+        amount *= 1.0f + MCH_MATCH_AMOUNT * g;
+        colour = _fmaxf(colour - MCH_MATCH_COLOUR * g, 0.0f);
+    }
+    else scalePx = MCH_HALO_UM * uiHalSize / (gaugeUm / (float)p_Width);
 
-    int stride = (uiQuality == HQ_BEST) ? 1 : ((uiQuality == HQ_GOOD) ? 2 : 4);
+    int stride = (uiQuality == HQ_ULTRA) ? 1 : ((uiQuality == HQ_BEST) ? 2 : ((uiQuality == HQ_GOOD) ? 4 : 8));
+    int nTaps = MCH_TAPS_MAX / stride;
+    // Each tap averages three pixels along the tangent, spread over the gap to
+    // the neighbouring taps (about 2 pi r / sqrt(n) on a golden-angle spiral),
+    // so a small bright source is caught by the taps around it instead of by
+    // one or none of them.
+    float spread = 6.28318531f / (3.0f * _sqrtf((float)nTaps));
     unsigned int h = MchHash((unsigned int)p_X * 0x8da6b343U ^ (unsigned int)p_Y * 0xd8163841U);
     float rot = (float)(h >> 8) * (6.28318531f / 16777216.0f);
     float cr = _cosf(rot), sr = _sinf(rot);
+    int bloomOn = uiBloom > 0.0f;
 
-    float sum = 0.0f;
+    float sr_ = 0.0f, sg = 0.0f, sb = 0.0f;
     int n = 0;
-    for (int i = (int)(h & 3U) % stride; i < MCH_TAPS_MAX; i += stride)
+    for (int i = (int)(h & 7U) % stride; i < MCH_TAPS_MAX; i += stride)
     {
         float r  = MCH_TAP_RADIUS[i] * scalePx;
         float ox = MCH_TAP_COS[i] * cr - MCH_TAP_SIN[i] * sr;
         float oy = MCH_TAP_SIN[i] * cr + MCH_TAP_COS[i] * sr;
-        int x = p_X + (int)_floor(ox * r + 0.5f);
-        int y = p_Y + (int)_floor(oy * r + 0.5f);
-        x = x < 0 ? 0 : (x >= p_Width ? p_Width - 1 : x);
-        y = y < 0 ? 0 : (y >= p_Height ? p_Height - 1 : y);
-        sum += MchThreshold(MchDecode(_tex2D(p_TexR, x, y), uiInput), thr);
-        n += 1;
+        float d  = spread * r;
+        for (int k = -1; k <= 1; ++k)
+        {
+            int x = MchClampI(p_X + (int)_floor(ox * r - oy * d * (float)k + 0.5f), p_Width - 1);
+            int y = MchClampI(p_Y + (int)_floor(oy * r + ox * d * (float)k + 0.5f), p_Height - 1);
+            sr_ += MchThreshold(MchDecode(_tex2D(p_TexR, x, y), uiInput), thr);
+            if (bloomOn)
+            {
+                sg += MchThreshold(MchDecode(_tex2D(p_TexG, x, y), uiInput), thr);
+                sb += MchThreshold(MchDecode(_tex2D(p_TexB, x, y), uiInput), thr);
+            }
+            n += 1;
+        }
     }
 
     float3 lin = make_float3(MchDecode(c.x, uiInput), MchDecode(c.y, uiInput), MchDecode(c.z, uiInput));
-    float3 hal = MchHalate(lin, sum / (float)n, uiHalAmount, uiHalColour, thr);
-    if (hal.x == lin.x && hal.y == lin.y) return c;            // nothing scattered: bit exact
-    return make_float3(MchEncode(hal.x, uiInput), MchEncode(hal.y, uiInput), c.z);
+    float inv = 1.0f / (float)n;
+    float3 blurred = make_float3(sr_ * inv,
+                                 bloomOn ? sg * inv : MchThreshold(lin.y, thr),
+                                 bloomOn ? sb * inv : MchThreshold(lin.z, thr));
+    float3 hal = MchHalate(lin, blurred, amount, colour, uiBloom, thr);
+    if (hal.x == lin.x && hal.y == lin.y && hal.z == lin.z) return c;   // nothing scattered: bit exact
+    return make_float3(hal.x == lin.x ? c.x : MchEncode(hal.x, uiInput),
+                       hal.y == lin.y ? c.y : MchEncode(hal.y, uiInput),
+                       hal.z == lin.z ? c.z : MchEncode(hal.z, uiInput));
 }
 
 // MarkCaptures MC Film Halation
