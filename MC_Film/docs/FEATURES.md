@@ -29,7 +29,8 @@ Status: ✅ done · 🟡 partly / approximation · ⏳ planned · 🚫 not possi
 | Contrast / contrast presets | Core · Negative Contrast; presets in OFX | 🟡 |
 | Layer gammas / dye crossover | Core v0.4 · Red / Green / Blue Layer Contrast | ✅ |
 | Open / Close, Shadow & Highlight roll, Black / White anchor, Highlight latitude, Black depth, Base fog | **Negative Designer**: reshaping the stock's curves (toe, shoulder, latitude, fog) | ⏳ next |
-| Dye saturation (per dye) | Negative Designer: dye density scaling | ⏳ next |
+| Dye crossover: midtone position / hold, shadow / highlight / offset C M Y | Core v0.5 · Dye Crossover | ✅ |
+| Dye saturation: colour response, hue twist, chroma rolloff, vibrance, richness, highlight desaturation | Core v0.5 · Film Saturation + Dye Saturation | ✅ |
 | Save / load custom stocks (My Stocks) | OFX: stock files (JSON) in a user folder | ⏳ OFX |
 
 ## Print

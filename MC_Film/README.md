@@ -8,9 +8,9 @@ Stock data: derived from **spektrafilm by Andrea Volpato** (https://github.com/a
 
 ---
 
-## MC Film Core v0.4: negative + print engine
+## MC Film Core v0.5: negative + print engine
 
-`MC_Film-Core-v0.4.dctl`
+`MC_Film-Core-v0.5.dctl`
 
 A physically based simulation: the scene is exposed onto a colour negative, developed, printed with printer lights onto a print stock, then projected and viewed.
 
@@ -35,6 +35,8 @@ Each negative and print pair is timed so that a scene 18% grey prints as a neutr
 | Red / Green / Blue Layer Contrast | Development gamma per dye layer: the film crossover. 18% grey stays neutral, while shadows and highlights shift in opposite directions. |
 | Push Pull | Development in stops. Push is fitted to measured push-processed Portra 800 (gamma ×1.20 at +1, ×1.31 at +2). Pull is the inverse. |
 | Negative Contrast | Development gamma around 18% grey. The stock's toe and shoulder are kept. |
+| Dye Crossover: Midtone Position, Midtone Hold, Shadow / Highlight / Offset Cyan, Magenta, Yellow | Per-layer exposure shifts in smooth shadow and highlight zones around the midtone, named by the print result (+ Cyan = a more cyan print). Applied before development, so a grey ramp can never reverse. |
+| Dye Saturation: Hue Twist, Chroma Rolloff, Vibrance, Richness, Highlight Desaturation | Shapes the colour of the exposure before development: rotation about the neutral axis, a soft limit on strong colours, a boost for weak colours, density build-up in saturated colours, and colour drained from highlights. Greys stay unchanged. |
 | Print Exposure | Printer light on all channels, in points (about 12 points = 1 stop) |
 | Printer Red / Green / Blue | Lab timing in points. More red light means more cyan, so the print goes cooler. |
 | Print Contrast | Print development gamma around 18% grey |
@@ -73,7 +75,7 @@ C. Split negative / print, for effects that live on the film (grain per dye laye
 
 **Install.** Copy the `.dctl` to `C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\LUT` (macOS: `/Library/Application Support/Blackmagic Design/DaVinci Resolve/LUT`). Then use **Project Settings › Color Management › Update Lists**, and pick it under **ResolveFX Color › DCTL**.
 
-`docs/chart.png` shows a synthetic test chart through seven stock pairs. `docs/features.png` shows the bleach bypass modes and Film Saturation.
+`docs/chart.png` shows a synthetic test chart through seven stock pairs. `docs/features.png` shows the bleach bypass modes, Film Saturation, Dye Crossover and Dye Saturation.
 
 ### Tests
 

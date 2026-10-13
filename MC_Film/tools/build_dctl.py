@@ -26,7 +26,7 @@ sys.path.insert(0, HERE)
 import mcfilm_model as m  # noqa: E402
 import mcfilm_effects as fx  # noqa: E402
 
-VERSION = "0.4"
+VERSION = "0.5"
 TABLES_JSON = os.path.join(ROOT, "data", "mcfilm_tables.json")
 TEMPLATE = os.path.join(ROOT, "src", "MC_Film-Core.dctl.in")
 OUTPUT = os.path.join(ROOT, "MC_Film-Core-v%s.dctl" % VERSION)
@@ -116,6 +116,9 @@ def generate(t):
         "TINT_DUV": repr(m.TINT_DUV_PER_UNIT),
         "TEMP_REF_K": repr(m.TEMP_REF_K),
         "MIRED_MIN": repr(m.MIRED_MIN),
+        **{k: repr(getattr(m, k)) for k in ("XOVER_LOGE_PER_UNIT", "XOVER_ZONE_WIDTH", "XOVER_HOLD_MAX",
+                                            "TWIST_MAX_DEG", "ROLLOFF_KNEE", "VIBRANCE_SCALE",
+                                            "RICHNESS_LOGE", "HL_DESAT_START", "HL_DESAT_WIDTH")},
         "OUT_ENUMS": ", ".join(e for e, _ in m.OUTPUTS),
         "OUT_NAMES": ", ".join(n for _, n in m.OUTPUTS),
         "CURVE_N": str(m.CURVE_N),

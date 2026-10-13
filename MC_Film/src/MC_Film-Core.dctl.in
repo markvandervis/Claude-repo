@@ -69,6 +69,42 @@ DEFINE_UI_TOOLTIP(uiLayerGreen, "Development gamma of the green-sensitive (magen
 DEFINE_UI_PARAMS(uiLayerBlue, Blue Layer Contrast, DCTLUI_SLIDER_FLOAT, 1.0, 0.7, 1.3, 0.01)
 DEFINE_UI_TOOLTIP(uiLayerBlue, "Development gamma of the blue-sensitive (yellow dye) layer only.")
 DEFINE_UI_TOOLTIP(uiNegContrast, "Development gamma of the negative, around 18 % grey. 1 is the stock as measured. The stock's own toe and shoulder are kept.")
+// --- Dye Crossover (named by the print result: + Cyan = a more cyan print) --
+DEFINE_UI_PARAMS(uiXMidPos, Midtone Position, DCTLUI_SLIDER_FLOAT, 0.184, 0.02, 0.9, 0.001)
+DEFINE_UI_TOOLTIP(uiXMidPos, "Scene-linear level that separates shadows from highlights for the crossover and Highlight Desaturation. 0.184 is the 18 % grey the stocks are timed on.")
+DEFINE_UI_PARAMS(uiXHold, Midtone Hold, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiXHold, "Protects a zone around the midtone from the shadow and highlight shifts (1 = +/- 1.5 stops).")
+DEFINE_UI_PARAMS(uiSCyan, Shadow Cyan, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiSCyan, "Shifts the shadows of the print towards cyan (+) or away from it (-), by changing the exposure of that dye's film layer (+1 = 1/3 stop on that layer).")
+DEFINE_UI_PARAMS(uiSMagenta, Shadow Magenta, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiSMagenta, "Shifts the shadows of the print towards magenta (+) or away from it (-), by changing the exposure of that dye's film layer (+1 = 1/3 stop on that layer).")
+DEFINE_UI_PARAMS(uiSYellow, Shadow Yellow, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiSYellow, "Shifts the shadows of the print towards yellow (+) or away from it (-), by changing the exposure of that dye's film layer (+1 = 1/3 stop on that layer).")
+DEFINE_UI_PARAMS(uiHCyan, Highlight Cyan, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHCyan, "Shifts the highlights of the print towards cyan (+) or away from it (-), by changing the exposure of that dye's film layer (+1 = 1/3 stop on that layer).")
+DEFINE_UI_PARAMS(uiHMagenta, Highlight Magenta, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHMagenta, "Shifts the highlights of the print towards magenta (+) or away from it (-), by changing the exposure of that dye's film layer (+1 = 1/3 stop on that layer).")
+DEFINE_UI_PARAMS(uiHYellow, Highlight Yellow, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHYellow, "Shifts the highlights of the print towards yellow (+) or away from it (-), by changing the exposure of that dye's film layer (+1 = 1/3 stop on that layer).")
+DEFINE_UI_PARAMS(uiOCyan, Offset Cyan, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiOCyan, "Shifts the whole image of the print towards cyan (+) or away from it (-), by changing the exposure of that dye's film layer (+1 = 1/3 stop on that layer).")
+DEFINE_UI_PARAMS(uiOMagenta, Offset Magenta, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiOMagenta, "Shifts the whole image of the print towards magenta (+) or away from it (-), by changing the exposure of that dye's film layer (+1 = 1/3 stop on that layer).")
+DEFINE_UI_PARAMS(uiOYellow, Offset Yellow, DCTLUI_SLIDER_FLOAT, 0.0, -2.0, 2.0, 0.01)
+DEFINE_UI_TOOLTIP(uiOYellow, "Shifts the whole image of the print towards yellow (+) or away from it (-), by changing the exposure of that dye's film layer (+1 = 1/3 stop on that layer).")
+
+// --- Dye Saturation ------------------------------------------------------------
+DEFINE_UI_PARAMS(uiHueTwist, Hue Twist, DCTLUI_SLIDER_FLOAT, 0.0, -30.0, 30.0, 0.1)
+DEFINE_UI_TOOLTIP(uiHueTwist, "Rotates every colour around the neutral axis, in degrees, at exposure onto the film. Greys never move.")
+DEFINE_UI_PARAMS(uiChromaRolloff, Chroma Rolloff, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiChromaRolloff, "Softly limits the strongest colours while leaving moderate ones alone.")
+DEFINE_UI_PARAMS(uiVibrance, Vibrance, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiVibrance, "Saturation that acts mostly on weak colours: + lifts muted colours, - mutes them, strong colours change little.")
+DEFINE_UI_PARAMS(uiRichness, Richness, DCTLUI_SLIDER_FLOAT, 0.0, -1.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiRichness, "Saturated colours print denser (+): deeper, richer colour, the way strong dyes build density. - makes them lighter. Greys are not changed.")
+DEFINE_UI_PARAMS(uiHlDesat, Highlight Desaturation, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.01)
+DEFINE_UI_TOOLTIP(uiHlDesat, "Drains colour from the highlights above the Midtone Position, as an over-exposed negative does.")
+
 DEFINE_UI_PARAMS(uiPrintExposure, Print Exposure, DCTLUI_SLIDER_FLOAT, 0.0, -24.0, 24.0, 1.0)
 DEFINE_UI_TOOLTIP(uiPrintExposure, "Printer light in printer points on all three channels, as a lab times a print. +1 point = 0.025 log E more light = a denser, darker print; about 12 points make one stop.")
 DEFINE_UI_PARAMS(uiPrinterRed, Printer Red, DCTLUI_SLIDER_FLOAT, 0.0, -12.0, 12.0, 1.0)
@@ -129,6 +165,15 @@ DEFINE_UI_TOOLTIP(uiOutput, "Encoding of the projected print. DaVinci WG Interme
 #define MCF_TEMP_REF_K      @@TEMP_REF_K@@f
 #define MCF_TINT_DUV        @@TINT_DUV@@f
 #define MCF_MIRED_MIN       @@MIRED_MIN@@f
+#define MCF_XOVER_PER_UNIT  @@XOVER_LOGE_PER_UNIT@@f
+#define MCF_XOVER_WIDTH     @@XOVER_ZONE_WIDTH@@f
+#define MCF_XOVER_HOLD_MAX  @@XOVER_HOLD_MAX@@f
+#define MCF_TWIST_MAX       @@TWIST_MAX_DEG@@f
+#define MCF_ROLLOFF_KNEE    @@ROLLOFF_KNEE@@f
+#define MCF_VIBRANCE_SCALE  @@VIBRANCE_SCALE@@f
+#define MCF_RICHNESS_LOGE   @@RICHNESS_LOGE@@f
+#define MCF_HLDESAT_START   @@HL_DESAT_START@@f
+#define MCF_HLDESAT_WIDTH   @@HL_DESAT_WIDTH@@f
 #define MCF_BLEACH_AUTH_K   @@BLEACH_AUTH_K@@f
 #define MCF_BLEACH_AUTH_E   @@BLEACH_AUTH_E@@f
 #define MCF_BLEACH_GRUNGE_K @@BLEACH_GRUNGE_K@@f
@@ -338,11 +383,70 @@ __DEVICE__ float McfDevelopLayer(int neg, int ch, float relLogE, float gamma)
     return McfCurve(MCF_NEG_CURVES, neg, ch, mid + gamma * relLogE, MCF_NEG_LOGE_MIN, MCF_NEG_LOGE_MAX);
 }
 
+__DEVICE__ float McfSmooth01(float x)
+{
+    float t = _saturatef(x);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Dye Crossover and Dye Saturation, on the layer exposures e (log10, relative
+// to each layer's 18 % grey exposure) BEFORE development, so the stock's own
+// curves still bound the result.
+//   c = e - mean(e) is the colour of the exposure (zero sum); its length is
+//   the chroma.  Twist rotates c about the neutral axis, Vibrance / Rolloff /
+//   Highlight Desaturation scale it, Richness lowers the mean exposure in
+//   proportion to the chroma (saturated colours print denser).
+//   Crossover adds per-layer exposure shifts weighted by smooth shadow /
+//   highlight zones of the mean exposure.  The zone weights rise at most
+//   1.5 / width per log E, and |shift| <= 0.2 log E, so every layer's
+//   exposure still rises with scene exposure: a grey ramp cannot reverse.
+//   The dye names are the print result: + Cyan means less red-layer exposure.
+//   dp1 = (twist deg, rolloff, vibrance, richness), dp2 = (hlDesat, midPos, hold)
+__DEVICE__ float3 McfDyeShape(float3 e, float4 dp1, float3 dp2,
+                              float3 shadow, float3 highlight, float3 offset)
+{
+    float mean = (e.x + e.y + e.z) * (1.0f / 3.0f);
+    float cx = e.x - mean, cy = e.y - mean, cz = e.z - mean;
+    float zone = mean - McfLog10(dp2.y / 0.184f);
+
+    if (dp1.x != 0.0f)
+    {
+        float a = dp1.x * (3.14159265f / 180.0f);
+        float ca = _cosf(a), sa = _sinf(a) * 0.57735027f;     // k x c with k = (1,1,1)/sqrt(3)
+        float nx = cx * ca + (cz - cy) * sa;
+        float ny = cy * ca + (cx - cz) * sa;
+        float nz = cz * ca + (cy - cx) * sa;
+        cx = nx; cy = ny; cz = nz;
+    }
+    float m = _sqrtf(cx * cx + cy * cy + cz * cz);
+    if (m > 1.0e-9f)
+    {
+        float g = 1.0f;
+        if (dp1.z != 0.0f) g *= 1.0f + dp1.z * _expf(-m / MCF_VIBRANCE_SCALE);
+        if (dp1.y > 0.0f)
+        {
+            float r = dp1.y * m * g / MCF_ROLLOFF_KNEE;
+            g /= _sqrtf(1.0f + r * r);
+        }
+        if (dp2.x > 0.0f) g *= 1.0f - dp2.x * McfSmooth01((zone - MCF_HLDESAT_START) / MCF_HLDESAT_WIDTH);
+        cx *= g; cy *= g; cz *= g;
+    }
+    if (dp1.w != 0.0f) mean -= dp1.w * MCF_RICHNESS_LOGE * _sqrtf(cx * cx + cy * cy + cz * cz);
+
+    float h  = dp2.z * MCF_XOVER_HOLD_MAX;
+    float ws = McfSmooth01((-zone - h) / MCF_XOVER_WIDTH);
+    float wh = McfSmooth01((zone - h) / MCF_XOVER_WIDTH);
+    return make_float3(mean + cx - MCF_XOVER_PER_UNIT * (ws * shadow.x + wh * highlight.x + offset.x),
+                       mean + cy - MCF_XOVER_PER_UNIT * (ws * shadow.y + wh * highlight.y + offset.y),
+                       mean + cz - MCF_XOVER_PER_UNIT * (ws * shadow.z + wh * highlight.z + offset.z));
+}
+
 // Film saturation scales how far the three layer exposures (each relative to
 // its 18 % grey exposure) spread around their mean.  A grey has no spread and
 // is left exactly as it was; 0 turns every colour into the grey of the same
 // exposure.
-__DEVICE__ float3 McfDevelopNegative(float3 rgb, int neg, float exposureStops, float3 gamma, float filmSat)
+__DEVICE__ float3 McfDevelopNegative(float3 rgb, int neg, float exposureStops, float3 gamma, float filmSat,
+                                     int dyeOn, float4 dp1, float3 dp2, float3 shadow, float3 highlight, float3 offset)
 {
     int m = neg * 9;
     float3 raw = McfMul33(MCF_NEG_MATRIX[m + 0], MCF_NEG_MATRIX[m + 1], MCF_NEG_MATRIX[m + 2],
@@ -358,6 +462,11 @@ __DEVICE__ float3 McfDevelopNegative(float3 rgb, int neg, float exposureStops, f
         ex = mean + filmSat * (ex - mean);
         ey = mean + filmSat * (ey - mean);
         ez = mean + filmSat * (ez - mean);
+    }
+    if (dyeOn)
+    {
+        float3 s = McfDyeShape(make_float3(ex, ey, ez), dp1, dp2, shadow, highlight, offset);
+        ex = s.x; ey = s.y; ez = s.z;
     }
     return make_float3(McfDevelopLayer(neg, 0, ex, gamma.x),
                        McfDevelopLayer(neg, 1, ey, gamma.y),
@@ -564,8 +673,16 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
         if (uiGamutCompress) lin = McfGamutCompress(lin);
         lin = make_float3(_fmaxf(lin.x, 0.0f), _fmaxf(lin.y, 0.0f), _fmaxf(lin.z, 0.0f));
         float g = uiNegContrast * McfPushGamma(uiPushPull);
+        float3 sh = make_float3(uiSCyan, uiSMagenta, uiSYellow);
+        float3 hi = make_float3(uiHCyan, uiHMagenta, uiHYellow);
+        float3 of = make_float3(uiOCyan, uiOMagenta, uiOYellow);
+        int dyeOn = (uiHueTwist != 0.0f || uiChromaRolloff != 0.0f || uiVibrance != 0.0f || uiRichness != 0.0f ||
+                     uiHlDesat != 0.0f || sh.x != 0.0f || sh.y != 0.0f || sh.z != 0.0f ||
+                     hi.x != 0.0f || hi.y != 0.0f || hi.z != 0.0f || of.x != 0.0f || of.y != 0.0f || of.z != 0.0f);
         d = McfDevelopNegative(lin, uiNegative, uiExposure,
-                               make_float3(g * uiLayerRed, g * uiLayerGreen, g * uiLayerBlue), uiFilmSat);
+                               make_float3(g * uiLayerRed, g * uiLayerGreen, g * uiLayerBlue), uiFilmSat,
+                               dyeOn, make_float4(uiHueTwist, uiChromaRolloff, uiVibrance, uiRichness),
+                               make_float3(uiHlDesat, uiXMidPos, uiXHold), sh, hi, of);
     }
     if (uiOutput == OUT_CINEON) return McfCineonEncode(d);
 

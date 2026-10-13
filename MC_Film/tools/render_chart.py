@@ -89,7 +89,12 @@ FEATURES = [("250D -> 2383", []),
             ("Bleach Grunge, print", ["uiBleach=2", "uiBleachStrength=1"]),
             ("Bleach Authentic, negative", ["uiBleach=1", "uiBleachStage=1", "uiBleachStrength=1"]),
             ("Film Saturation 0.6", ["uiFilmSat=0.6"]),
-            ("Film Saturation 1.4, Push +1", ["uiFilmSat=1.4", "uiPushPull=1"])]
+            ("Film Saturation 1.4, Push +1", ["uiFilmSat=1.4", "uiPushPull=1"]),
+            ("Crossover: Shadow Cyan +1.2, Highlight Yellow +1, Hold 0.3",
+             ["uiSCyan=1.2", "uiHYellow=1", "uiXHold=0.3"]),
+            ("Hue Twist +12, Richness +0.6", ["uiHueTwist=12", "uiRichness=0.6"]),
+            ("Vibrance +0.8, Chroma Rolloff 0.8", ["uiVibrance=0.8", "uiChromaRolloff=0.8"]),
+            ("Highlight Desaturation 1, Exposure +1.5", ["uiHlDesat=1", "uiExposure=1.5"])]
 
 
 def sheet_of(panels, path):

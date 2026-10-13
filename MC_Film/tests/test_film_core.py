@@ -105,6 +105,31 @@ def hsv(h, s, v):
 
 
 # ---------------------------------------------------------------------------
+DYE_UI = dict(mid_pos="uiXMidPos", hold="uiXHold", twist="uiHueTwist", rolloff="uiChromaRolloff",
+              vibrance="uiVibrance", richness="uiRichness", hl_desat="uiHlDesat")
+
+
+def dye_ui(d):
+    ui = {}
+    for k, v in d.items():
+        if k in ("shadow", "highlight", "offset"):
+            for dye, val in zip(("Cyan", "Magenta", "Yellow"), v):
+                ui["ui%s%s" % (k[0].upper(), dye)] = val
+        else:
+            ui[DYE_UI[k]] = v
+    return ui
+
+
+def random_dye(rng):
+    return dict(mid_pos=rng.uniform(0.05, 0.6), hold=rng.uniform(0, 1),
+                shadow=tuple(rng.uniform(-2, 2) for _ in range(3)),
+                highlight=tuple(rng.uniform(-2, 2) for _ in range(3)),
+                offset=tuple(rng.choice([0.0, rng.uniform(-2, 2)]) for _ in range(3)),
+                twist=rng.choice([0.0, rng.uniform(-30, 30)]), rolloff=rng.choice([0.0, rng.uniform(0, 1)]),
+                vibrance=rng.choice([0.0, rng.uniform(-1, 1)]), richness=rng.choice([0.0, rng.uniform(-1, 1)]),
+                hl_desat=rng.choice([0.0, rng.uniform(0, 1)]))
+
+
 def test_static():
     section("1. static checks")
     src = open(DCTL, encoding="utf-8").read()
@@ -121,7 +146,8 @@ def test_static():
     code = re.sub(r"//.*", "", src)
     check("_exp10f" not in code, "no _exp10f")
     intr = set(re.findall(r"\b(_[a-z][a-z0-9]*)\s*\(", code))
-    check(intr <= {"_fmaxf", "_fminf", "_fabs", "_clampf", "_sqrtf", "_powf", "_exp2f", "_log2f", "_floor"},
+    check(intr <= {"_fmaxf", "_fminf", "_fabs", "_clampf", "_sqrtf", "_powf", "_exp2f", "_log2f", "_floor",
+                     "_cosf", "_sinf", "_expf", "_saturatef"},
           "only standard intrinsics (%s)" % sorted(intr))
     check("CC BY-SA 4.0" in src and "Andrea Volpato" in src and "github.com/andreavolpato/spektrafilm" in src,
           "stock data attribution present")
@@ -154,13 +180,15 @@ def test_cross():
                           uiSceneTemp=rng.choice([0.0, rng.uniform(-100, 100)]),
                           uiSceneTint=rng.choice([0.0, rng.uniform(-100, 100)]),
                           uiLayerRed=rng.uniform(0.7, 1.3), uiLayerGreen=1.0, uiLayerBlue=rng.uniform(0.7, 1.3))
+                dye = random_dye(rng) if rng.random() < 0.6 else {}
+                ui.update(dye_ui(dye))
                 a = run(px, **ui)
                 b = [m.render_pixel(np.array(p), TABLES, ni, pi, "IN_DWG", oe, ui["uiExposure"],
                                     ui["uiPushPull"], (ui["uiPrinterRed"], 0.0, ui["uiPrinterBlue"]), 0.0,
                                     1.0, ui["uiPrintContrast"], True, ui["uiFilmSat"], bleach, stage,
                                     ui["uiBleachStrength"], ui["uiSilverContrast"], bool(ui["uiPreserveMid"]),
                                     ui["uiWhite"], ui["uiSceneTemp"], ui["uiSceneTint"],
-                                    (ui["uiLayerRed"], 1.0, ui["uiLayerBlue"]))
+                                    (ui["uiLayerRed"], 1.0, ui["uiLayerBlue"]), dye)
                      for p in px]
                 worst = max(worst, max(abs(x - y) for pa, pb in zip(a, b) for x, y in zip(pa, pb)))
     check(worst < 2e-4, "max |DCTL - reference| over all stocks and outputs = %.1e" % worst)
@@ -179,6 +207,13 @@ def test_neutral():
     print("        printed 18 %% grey: %.3f .. %.3f (Rec709 gamma 2.4 code value)" % (min(lvl), max(lvl)))
 
 
+def lin709_luma(c):
+    def di_decode(v):
+        return 2.0 ** (min(v, 5.0) / 0.07329248 - 7.0) - 0.0075 if v > 0.02740668 else v / 10.44426855
+    lin = m.DWG_TO_REC709 @ np.array([di_decode(v) for v in c])
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
 def test_ramps():
     section("4. grey ramps: monotonic and smooth over 16 stops")
     stops = np.linspace(-10, 6, 801)
@@ -190,14 +225,19 @@ def test_ramps():
                        dict(uiPrintContrast=1.5, uiExposure=3.0),
                        dict(uiBleach=2, uiBleachStrength=1.0, uiSilverContrast=2.0),
                        dict(uiBleach=2, uiBleachStage=1, uiBleachStrength=1.0, uiSilverContrast=2.0),
-                       dict(uiBleach=1, uiBleachStage=1, uiPreserveMid=0, uiFilmSat=2.0)):
-                out = run(px, uiNegative=ni, uiPrint=pi, **ui)
-                y = np.array([0.2126 * o[0] + 0.7152 * o[1] + 0.0722 * o[2] for o in out])
+                       dict(uiBleach=1, uiBleachStage=1, uiPreserveMid=0, uiFilmSat=2.0),
+                       dye_ui(dict(shadow=(2, -2, 2), highlight=(-2, 2, -2), offset=(2, 0, -2), hold=0.0)),
+                       dye_ui(dict(shadow=(-2, 2, -2), highlight=(2, -2, 2), richness=1.0, hl_desat=1.0))):
+                # judged on the print's own light (DWG output, no display
+                # clipping): a strong crossover can push deep shadows outside
+                # Rec.709, and clipping a channel there is not a tone reversal
+                out = run(px, uiNegative=ni, uiPrint=pi, uiOutput=OUT["OUT_DWG"], **ui)
+                y = np.array([lin709_luma(o) for o in out])
                 d = np.diff(y)
                 worst_back = max(worst_back, -d.min())
                 worst_jump = max(worst_jump, d.max())
-    check(worst_back < 1e-5, "grey ramp never gets darker as exposure rises (worst %.1e)" % worst_back)
-    check(worst_jump < 0.02, "no jumps along the ramp (largest step %.4f per 1/50 stop)" % worst_jump)
+    check(worst_back < 2e-6, "grey ramp never gets darker as exposure rises (print light, worst %.1e)" % worst_back)  # float32 DWG precision
+    check(worst_jump < 0.04, "no jumps along the ramp (largest linear step %.4f per 1/50 stop)" % worst_jump)
 
 
 def test_hue():
@@ -382,6 +422,59 @@ def test_v04_controls():
     check(abs(b[1] - a[1] ** (2.4 / 2.2)) < 1e-5, "Rec709 Gamma 2.2 output is the same light encoded at 2.2")
 
 
+def test_dye():
+    section("6e. Dye Crossover and Dye Saturation")
+    ramp = [(f32(di_encode(m.MIDGRAY * 2 ** s)),) * 3 for s in (-3.0, 0.0, 3.0)]
+    base = run(ramp)
+    off = run(ramp, uiXMidPos=0.3, uiXHold=0.7)
+    check(off == base, "Midtone Position / Hold alone change nothing (bit exact)")
+
+    def cast(o, b, i):          # how much more of colour channel i than the others, against base
+        return (o[i] - (sum(o) - o[i]) / 2) - (b[i] - (sum(b) - b[i]) / 2)
+
+    o = run(ramp, uiSCyan=1.5)
+    same = lambda a, b: max(abs(x - y) for x, y in zip(a, b)) < 1e-6      # noqa: E731
+    check(cast(o[0], base[0], 0) < -0.01 and same(o[1], base[1]) and abs(cast(o[2], base[2], 0)) < 0.004,
+          "Shadow Cyan: shadows go cyan, 18 % grey untouched, highlights nearly untouched")
+    o = run(ramp, uiHMagenta=1.5)
+    check(cast(o[2], base[2], 1) < -0.01 and same(o[1], base[1]), "Highlight Magenta: highlights go magenta, "
+          "18 % grey untouched")
+    o = run(ramp, uiOYellow=1.0)
+    check(all(cast(a, b, 2) < -0.005 for a, b in zip(o, base)), "Offset Yellow: the whole image goes yellow")
+    o = run(ramp, uiSCyan=1.5, uiXHold=1.0)
+    s1 = run([(f32(di_encode(m.MIDGRAY * 2 ** -1.0)),) * 3], uiSCyan=1.5)[0]
+    s0 = run([(f32(di_encode(m.MIDGRAY * 2 ** -1.0)),) * 3], uiSCyan=1.5, uiXHold=1.0)[0]
+    b1 = run([(f32(di_encode(m.MIDGRAY * 2 ** -1.0)),) * 3])[0]
+    check(abs(cast(s0, b1, 0)) < abs(cast(s1, b1, 0)) * 0.3, "Midtone Hold protects a stop below the midtone")
+
+    grey = [(f32(di_encode(m.MIDGRAY * 2 ** s)),) * 3 for s in (-2.0, 0.0, 2.0)]
+    col = [tuple(f32(di_encode(v)) for v in c) for c in ((0.30, 0.12, 0.06), (0.20, 0.17, 0.15), (0.06, 0.10, 0.30))]
+    b = run(col)
+    for ui, name in ((dict(uiHueTwist=20), "Hue Twist"), (dict(uiChromaRolloff=1), "Chroma Rolloff"),
+                     (dict(uiVibrance=1), "Vibrance"), (dict(uiRichness=1), "Richness")):
+        d = max(abs(x - y) for a, b in zip(run(grey, **ui), run(grey)) for x, y in zip(a, b))
+        check(d < 1e-6, "%s leaves greys untouched (%.1e)" % (name, d))
+    t = run(col, uiHueTwist=20)
+    check(all(max(abs(x - y) for x, y in zip(a, c)) > 0.01 for a, c in zip(t, b)), "Hue Twist moves colours")
+
+    def chroma(o):
+        return max(o) - min(o)
+    r = run(col, uiChromaRolloff=1.0)
+    check(chroma(r[0]) / chroma(b[0]) < chroma(r[1]) / chroma(b[1]) - 0.02,
+          "Chroma Rolloff limits strong colours more than weak ones (%.2f vs %.2f)" %
+          (chroma(r[0]) / chroma(b[0]), chroma(r[1]) / chroma(b[1])))
+    v = run(col, uiVibrance=1.0)
+    check(chroma(v[1]) / chroma(b[1]) > chroma(v[0]) / chroma(b[0]) + 0.05,
+          "Vibrance lifts weak colours more than strong ones (%.2f vs %.2f)" %
+          (chroma(v[1]) / chroma(b[1]), chroma(v[0]) / chroma(b[0])))
+    rich = run(col, uiRichness=1.0)
+    check(sum(rich[0]) < sum(b[0]) - 0.03, "Richness prints saturated colours darker")
+    hl = [tuple(f32(di_encode(v * 8)) for v in (0.30, 0.12, 0.06)), tuple(f32(di_encode(v)) for v in (0.30, 0.12, 0.06))]
+    hb, hd = run(hl), run(hl, uiHlDesat=1.0)
+    check(chroma(hd[0]) < chroma(hb[0]) * 0.8 and abs(chroma(hd[1]) - chroma(hb[1])) < 1e-6,
+          "Highlight Desaturation drains colour 3 stops up, not at the midtone")
+
+
 def test_extremes():
     section("7. extreme inputs")
     px = [(0, 0, 0), (1e6, 1e6, 1e6), (-5, -5, -5), (50, -3, 0.2), (1e-30, 0, 0), (0.5, 0.5, -20)]
@@ -408,6 +501,7 @@ def main():
     test_film_sat_bleach()
     test_stage_chaining()
     test_v04_controls()
+    test_dye()
     test_extremes()
     print("\n%d checks, %d failed" % (_n, len(_fail)))
     return 1 if _fail else 0
