@@ -144,7 +144,8 @@ def test_ramps():
     def back(zones, **p):
         return -np.diff(np.array(run(ramp, zones, **p)), axis=0).min()
     cleans = (dict(clean_blacks=0, clean_whites=0), dict(clean_blacks=100, clean_whites=100),
-              dict(clean_blacks=40, clean_whites=40), dict(pivot=3, clean_blacks=100), dict(pivot=-3, clean_whites=100))
+              dict(clean_blacks=40, clean_whites=40), dict(pivot=3, clean_blacks=100), dict(pivot=-3, clean_whites=100),
+              dict(neutral=5), dict(neutral=31.8, clean_blacks=65), dict(neutral=100))
     worst = 0.0
     for i in range(5):
         for v in ((1, 1, 1), (-1, -1, -1), (1, -1, 0), (-1, 1, -1)):
@@ -198,10 +199,12 @@ def test_controls():
     check(abs(half[0] - 0.5 * full[0]) < 2e-6, "Blend 50 gives half the toning")
     piv = run(grey((1.0,)), Z(Mid=(1, 0, 0)), pivot=1.0)[0][0] - grey((1.0,))[0][0]
     check(abs(piv - full[0]) < 2e-4, "Pivot +1 moves the zones up one stop")
-    nm = np.array(run(grey((0,)), Z(Mid=(1, 0, -1)), neutral=100)[0]) - np.array(grey((0,))[0])
-    check(np.abs(nm).max() < 1e-6, "Neutral Pivot 100 keeps the pivot grey neutral (Mid tint removed)")
-    nb = np.array(run(grey((0,)), Z(Mid=(1, 1, 1)), neutral=100)[0]) - np.array(grey((0,))[0])
-    check(nb.min() > 0.2 * K, "but Mid can still brighten the pivot")
+    zz = Z(Lo=(-1, 0, 0.3), LoMid=(-0.4, -0.2, 0), HiMid=(-0.4, 0, 0.16), Hi=(-0.44, 0, 0))
+    nm = np.array(run(grey((0,)), zz, neutral=31.8)[0]) - np.array(grey((0,))[0])
+    check(np.abs(nm).max() < 1e-6, "Neutral Pivot keeps the pivot grey neutral")
+    near = lambda st, n: abs(run(grey((st,)), zz, neutral=n, clean_blacks=0, clean_whites=0)[0][0] - grey((st,))[0][0])
+    check(near(1.0, 60) < near(1.0, 20) < near(1.0, 0), "a higher Neutral Pivot gives a wider neutral band")
+    check(abs(near(5.0, 31.8) - near(5.0, 0)) < 1e-6, "far from the pivot Neutral Pivot changes nothing")
     deep = grey((-10,)) + [(0.0, 0.0, 0.0)]
     check(maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=100), deep) < 2e-4 and
           maxdiff(run(deep, Z(Lo=(1, -1, 1)), clean_blacks=0), deep) > 0.02, "Clean Blacks 100 keeps black neutral")
@@ -229,7 +232,7 @@ def test_curves_extremes():
         mid = ps.tf_encode(ps.MIDGRAY, tf)
         col_x = int(mid * 1920)
         o = run([(col_x, 500, 0.2, 0.2, 0.2), (col_x + 40, 500, 0.2, 0.2, 0.2)], uiShowCurves=1, uiInput=ENC[tf])
-        check(o[0][0] > 0.9 and o[1][0] < 0.3, "%s: Show Curves draws the middle grey line at %.3f" % (tf, mid))
+        check(o[0][0] > 0.6 and o[1][0] < 0.3, "%s: Show Curves draws the middle grey line at %.3f" % (tf, mid))
     ramp = run([(x, 1079, 0.5, 0.5, 0.5) for x in (100, 1800)], zz, uiShowRamp=1)
     check(ramp[0][0] < 0.1 and ramp[1][0] > 0.9 and run([(100, 0, 0.5, 0.5, 0.5)], zz, uiShowRamp=1)[0] != ramp[0],
           "Show Ramp puts a toned grey ramp along the bottom")

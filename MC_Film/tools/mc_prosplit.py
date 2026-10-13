@@ -24,17 +24,18 @@ worked on as DaVinci Intermediate.
     measurements of a reference RGB split tone (Lo -100 at Clean Blacks 51,
     67 and 100): within about 0.005 code value.
 
-    Neutral Pivot  removes the tint (zero-sum part) of the Mid zone, so the
-                   pivot grey only gets lighter or darker, never coloured
+    Neutral Pivot  keeps a band around the pivot neutral: the toning fades in
+                   with smoothstep(|x| / h), h = 6.9 x slider / 100 stops
+                   (31.8 = about 2.2 stops, matched to the reference)
     Clean Blacks   fades the toning in from the transfer function's black over
                    H = 10 (slider / 100)^1.7 stops (smoothstep): 100 = clean
                    up to about +5 stops, 50 = about 3 stops above black
     Clean Whites   the same, down from code value 1.0
     Sat Mask       fades it out on saturated colours (tones the neutrals)
 
-A Clean fade is never made steeper than CLEAN_MIN_STOPS (below that the
-slider lowers its strength instead), so a grey ramp does not reverse for any
-single zone or same-direction settings.
+A Clean fade or the Neutral Pivot band is never made steeper than the
+strongest zone setting allows (below that the slider lowers its strength
+instead), so a grey ramp does not reverse.
 """
 
 import math
@@ -48,7 +49,9 @@ ZONES = ("Lo", "Lo-Mid", "Mid", "Hi-Mid", "Hi")
 ZONE_CENTRE0, ZONE_STEP = -2.5, 1.25    # nominal centres (boundaries half way between)
 ZONE_TAU = 1.5
 CLEAN_HEIGHT, CLEAN_POWER = 9.97, 1.7   # fade height in stops = H (slider / 100)^P
-CLEAN_MIN_STOPS = 3.0                   # never steeper than this; below it the strength drops
+CLEAN_MIN_STOPS = 3.0                   # minimum fade height at a zone slider of 100 (scales with the largest slider)
+NEUTRAL_WIDTH = 6.9                     # Neutral Pivot band half width in stops at 100
+NEUTRAL_GUARD = 1.65                    # band never steeper than 1.65 x the offset near the pivot (in stops)
 SAT_CHROMA = 0.08             # chroma (log) at which Sat Mask is fully on
 LUMA = (0.30, 0.60, 0.10)
 
@@ -160,27 +163,40 @@ def zone_offset(x, zones):
     return zone_weights(x) @ zones
 
 
-def clean(d, amount):
+def clean(d, amount, zmax=100.0):
     """fade-in weight at d stops from the black (or white) end"""
     if amount <= 0.0:
         return 1.0
     h = CLEAN_HEIGHT * (amount / 100.0) ** CLEAN_POWER
-    k = min(1.0, h / CLEAN_MIN_STOPS)
-    return 1.0 - k * (1.0 - smooth01(d / max(h, CLEAN_MIN_STOPS)))
+    hmin = max(CLEAN_MIN_STOPS * zmax / 100.0, 0.05)
+    k = min(1.0, h / hmin)
+    return 1.0 - k * (1.0 - smooth01(d / max(h, hmin)))
+
+
+def neutral_band(x, amount, zones, stop):
+    """the band's minimum width follows the zone offsets actually found around
+    the pivot, so it can be as narrow as the reference without a ramp reversing"""
+    if amount <= 0.0:
+        return 1.0
+    h = NEUTRAL_WIDTH * amount / 100.0
+    m = max(float(np.abs(zone_offset(f * h, zones)).max()) for f in (-1.0, -0.5, 0.0, 0.5, 1.0))
+    hmin = max(NEUTRAL_GUARD * m * SCALE / 100.0, 0.05)
+    k = min(1.0, h / hmin)
+    return 1.0 - k * (1.0 - smooth01(abs(x) / max(h, hmin)))
 
 
 def tone(y, p, tf="TF_DI"):
     """Mirror of McpTone: y = code values (3), p = control dict."""
     y = np.array(y, dtype=float)
-    zones = np.array(p["zones"], dtype=float).copy()
-    if p["neutral"] > 0.0:
-        zones[2] = zones[2] - p["neutral"] / 100.0 * (zones[2] - zones[2].mean())
+    zones = np.array(p["zones"], dtype=float)
+    zmax = float(np.abs(zones).max())
     piv, stop, black = tf_constants(tf, p["pivot"])
     x = (float(np.dot(LUMA, y)) - piv) / stop
     o = zone_offset(x, zones) * (stop / 100.0)
     w = p["blend"] / 100.0
-    w *= clean(x - (black - piv) / stop, p["clean_blacks"])
-    w *= clean((1.0 - piv) / stop - x, p["clean_whites"])
+    w *= clean(x - (black - piv) / stop, p["clean_blacks"], zmax)
+    w *= clean((1.0 - piv) / stop - x, p["clean_whites"], zmax)
+    w *= neutral_band(x, p["neutral"], zones, stop)
     if p["sat_mask"] > 0.0:
         m = float(np.linalg.norm(y - y.mean()))
         w *= 1.0 - p["sat_mask"] / 100.0 * smooth01(m / (SAT_CHROMA * stop / STOP))

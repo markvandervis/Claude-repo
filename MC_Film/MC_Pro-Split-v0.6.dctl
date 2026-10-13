@@ -3,7 +3,7 @@
 // www.markcaptures.com
 
 // ============================================================================
-//  MC_Pro-Split-v0.5.dctl  -  MC Pro Split (RGB split tone, five zones)
+//  MC_Pro-Split-v0.6.dctl  -  MC Pro Split (RGB split tone, five zones)
 //  ---------------------------------------------------------------------------
 //  An RGB split tone for DaVinci Resolve Studio, part of the MC Film suite:
 //  a red, green and blue offset for each of five tonal zones - Hi, Hi-Mid,
@@ -23,8 +23,7 @@
 //      o(x) = sum w_i(x) Z_i
 //      y'   = y + 1.8 stop x slider / 100 x Blend x clean x sat mask
 //
-//  Neutral Pivot removes the tint of the Mid zone (the pivot grey can only
-//  get lighter or darker); Clean Blacks and Clean Whites fade the toning out
+//  Neutral Pivot keeps a band around the pivot neutral; Clean Blacks and Clean Whites fade the toning out
 //  towards black and the brightest highlights; Sat Mask keeps it off
 //  saturated colours.
 //
@@ -38,7 +37,7 @@
 //      -> [MC Pro Split  Transfer Function: DaVinci Intermediate]
 //      -> [CST DWG / DaVinci Intermediate -> Rec.709]
 //
-//  Version : 0.5
+//  Version : 0.6
 //  Licence : All rights reserved.  © 2026 Mark van der Vis / MarkCaptures.
 //            You may use this file for personal and commercial grading work.
 //            You may not redistribute, share, sell, sublicense or publish it,
@@ -85,7 +84,7 @@ DEFINE_UI_TOOLTIP(uiBlend, "Strength of the whole split tone, in percent.")
 DEFINE_UI_PARAMS(uiPivot, Pivot, DCTLUI_SLIDER_FLOAT, 0.0, -3.0, 3.0, 0.001)
 DEFINE_UI_TOOLTIP(uiPivot, "Centre of the Mid zone, in stops from 18 % grey. All five zones move with it.")
 DEFINE_UI_PARAMS(uiNeutral, Neutral Pivot, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 100.0, 0.1)
-DEFINE_UI_TOOLTIP(uiNeutral, "Keeps the pivot grey neutral: removes this percentage of the Mid zone's tint, so Mid can only brighten or darken.")
+DEFINE_UI_TOOLTIP(uiNeutral, "Keeps a band around the Pivot neutral: the higher, the wider the band (31.8 fades back in over about 2 stops either side). The pivot grey itself stays neutral.")
 DEFINE_UI_PARAMS(uiCleanBlacks, Clean Blacks, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
 DEFINE_UI_TOOLTIP(uiCleanBlacks, "How far up from black the toning is faded out: 100 keeps it clean up to about 5 stops above middle grey, 50 about 3 stops above black. Black itself is always kept neutral.")
 DEFINE_UI_PARAMS(uiCleanWhites, Clean Whites, DCTLUI_SLIDER_FLOAT, 30.0, 0.0, 100.0, 0.1)
@@ -96,7 +95,7 @@ DEFINE_UI_TOOLTIP(uiSatMask, "Keeps the toning off saturated colours, in percent
 DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
 DEFINE_UI_PARAMS(uiShowCurves, Show Curves, DCTLUI_CHECK_BOX, 0)
-DEFINE_UI_TOOLTIP(uiShowCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input code value left to right, output bottom to top), with the diagonal, the middle grey (Pivot) line and the zone centres. Where curves overlap their colours add up: green + blue = cyan, all three = white.")
+DEFINE_UI_TOOLTIP(uiShowCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input code value left to right, output bottom to top) and the middle grey (Pivot) line. The curves are see-through and add up: unchanged they form one white line, green + blue = cyan.")
 DEFINE_UI_PARAMS(uiShowSatMask, Highlight Sat Mask, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiShowSatMask, "Shows the picture in grey with the colours that Sat Mask keeps out of the toning painted magenta.")
 DEFINE_UI_PARAMS(uiShowRamp, Show Ramp, DCTLUI_CHECK_BOX, 0)
@@ -119,6 +118,8 @@ DEFINE_UI_TOOLTIP(uiInput, "Log curve of this node's input; it sets where middle
 #define MCP_CLEAN_HEIGHT  9.97f
 #define MCP_CLEAN_POWER   1.7f
 #define MCP_CLEAN_MIN     3.0f
+#define MCP_NEUTRAL_WIDTH 6.9f
+#define MCP_NEUTRAL_GUARD 1.65f
 #define MCP_LOG10_2       0.30102999566f
 #define MCP_SAT_CHROMA    0.08f
 
@@ -221,13 +222,32 @@ __DEVICE__ float3 McpZoneOffset(float x, float3 z0, float3 z1, float3 z2, float3
 
 // Clean Blacks / Whites: the toning fades in over H = 10 (slider / 100)^1.7
 // stops from the black (or white) end, d stops away from it.  The fade is
-// never steeper than MCP_CLEAN_MIN stops; below that the strength drops.
-__DEVICE__ float McpClean(float d, float amount)
+// never steeper than the strongest zone slider (zmax) allows - below that
+// the strength drops instead - so a grey ramp cannot reverse.
+__DEVICE__ float McpClean(float d, float amount, float zmax)
 {
     if (amount <= 0.0f) return 1.0f;
     float h = MCP_CLEAN_HEIGHT * _powf(amount * 0.01f, MCP_CLEAN_POWER);
-    float k = _fminf(1.0f, h / MCP_CLEAN_MIN);
-    return 1.0f - k * (1.0f - McpSmooth01(d / _fmaxf(h, MCP_CLEAN_MIN)));
+    float hmin = _fmaxf(MCP_CLEAN_MIN * zmax * 0.01f, 0.05f);
+    float k = _fminf(1.0f, h / hmin);
+    return 1.0f - k * (1.0f - McpSmooth01(d / _fmaxf(h, hmin)));
+}
+
+// Neutral Pivot: a neutral band around the pivot, smoothstep(|x| / h) with
+// h = 6.9 stops x slider / 100.  Its minimum width follows the zone offsets
+// actually found around the pivot, so a grey ramp cannot reverse.
+__DEVICE__ float McpNeutral(float x, float amount, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4)
+{
+    if (amount <= 0.0f) return 1.0f;
+    float h = MCP_NEUTRAL_WIDTH * amount * 0.01f, m = 0.0f;
+    for (int i = -2; i <= 2; ++i)
+    {
+        float3 o = McpZoneOffset(0.5f * (float)i * h, z0, z1, z2, z3, z4);
+        m = _fmaxf(m, _fmaxf(_fabs(o.x), _fmaxf(_fabs(o.y), _fabs(o.z))));
+    }
+    float hmin = _fmaxf(MCP_NEUTRAL_GUARD * m * MCP_SCALE * 0.01f, 0.05f);
+    float k = _fminf(1.0f, h / hmin);
+    return 1.0f - k * (1.0f - McpSmooth01(_fabs(x) / _fmaxf(h, hmin)));
 }
 
 // Sat Mask weight of a pixel: 1 = toned, 0 = kept out.
@@ -240,25 +260,34 @@ __DEVICE__ float McpSatKeep(float3 y, float stop, float satMask)
 }
 
 // t = (pivot code value, code values per stop, black in stops from the pivot)
-// g = (blend %, unused, clean blacks %, clean whites %), satMask %;
-// zone sliders in -100 .. 100, z2 (Mid) already has Neutral Pivot applied.
+// g = (blend %, neutral pivot %, clean blacks %, clean whites %), satMask %;
+// zone sliders in -100 .. 100.
 __DEVICE__ float3 McpTone(float3 y, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4, float3 t, float4 g,
                           float satMask)
 {
+    float zmax = 0.0f;
+    zmax = _fmaxf(zmax, _fmaxf(_fabs(z0.x), _fmaxf(_fabs(z0.y), _fabs(z0.z))));
+    zmax = _fmaxf(zmax, _fmaxf(_fabs(z1.x), _fmaxf(_fabs(z1.y), _fabs(z1.z))));
+    zmax = _fmaxf(zmax, _fmaxf(_fabs(z2.x), _fmaxf(_fabs(z2.y), _fabs(z2.z))));
+    zmax = _fmaxf(zmax, _fmaxf(_fabs(z3.x), _fmaxf(_fabs(z3.y), _fabs(z3.z))));
+    zmax = _fmaxf(zmax, _fmaxf(_fabs(z4.x), _fmaxf(_fabs(z4.y), _fabs(z4.z))));
     float lum = 0.3f * y.x + 0.6f * y.y + 0.1f * y.z;
     float x = (lum - t.x) / t.y;
     float3 o = McpZoneOffset(x, z0, z1, z2, z3, z4);
     float w = g.x * 0.01f;
-    w *= McpClean(x - t.z, g.z);
-    w *= McpClean((1.0f - t.x) / t.y - x, g.w);
+    w *= McpClean(x - t.z, g.z, zmax);
+    w *= McpClean((1.0f - t.x) / t.y - x, g.w, zmax);
+    w *= McpNeutral(x, g.y, z0, z1, z2, z3, z4);
     w *= McpSatKeep(y, t.y, satMask);
     float k = MCP_SCALE * t.y * 0.01f * w;
     return make_float3(y.x + k * o.x, y.y + k * o.y, y.z + k * o.z);
 }
 
 // Show Curves: the red, green and blue curves of a grey ramp across the whole
-// frame (input DI code 0 .. 1 left to right, output 0 .. 1 bottom to top),
-// the diagonal, the Pivot and the zone centres.  Returns (colour, 1) on a line.
+// frame (input code value 0 .. 1 left to right, output 0 .. 1 bottom to top)
+// and the middle grey (Pivot) line.  The curves are see-through and add up
+// where they overlap: unchanged they form one white line, pulling red down
+// leaves a cyan line (green + blue) and a red one.  Returns (colour, opacity).
 __DEVICE__ float4 McpCurves(int px, int py, int w, int h, float3 z0, float3 z1, float3 z2, float3 z3, float3 z4,
                             float3 t, float4 g, float satMask)
 {
@@ -269,21 +298,18 @@ __DEVICE__ float4 McpCurves(int px, int py, int w, int h, float3 z0, float3 z1, 
     float3 c0 = McpTone(make_float3(u0, u0, u0), z0, z1, z2, z3, z4, t, g, satMask);
     float3 c1 = McpTone(make_float3(u0 + du, u0 + du, u0 + du), z0, z1, z2, z3, z4, t, g, satMask);
     float kr = (c1.x - c0.x) / du * asp, kg = (c1.y - c0.y) / du * asp, kb = (c1.z - c0.z) / du * asp;
-    // the three curves add up where they overlap: green + blue = cyan, all three = white
-    float onR = (_fabs(v - c0.x) / dv < 3.0f * lw * _sqrtf(1.0f + kr * kr)) ? 1.0f : 0.0f;
-    float onG = (_fabs(v - c0.y) / dv < 3.0f * lw * _sqrtf(1.0f + kg * kg)) ? 1.0f : 0.0f;
-    float onB = (_fabs(v - c0.z) / dv < 3.0f * lw * _sqrtf(1.0f + kb * kb)) ? 1.0f : 0.0f;
-    if (onR + onG + onB > 0.0f)
-        return make_float4(0.08f + 0.84f * onR, 0.08f + 0.84f * onG, 0.08f + 0.84f * onB, 1.0f);
-    if (_fabs(v - u0) / dv < 2.2f * lw * _sqrtf(1.0f + asp * asp)) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
-    if (_fabs(u0 - t.x) < 2.5f * lw * du) return make_float4(0.92f, 0.92f, 0.92f, 1.0f);
-    for (int i = 0; i < 5; ++i)
-    {
-        if (i == 2) continue;
-        float cz = t.x + (MCP_ZONE_C0 + MCP_ZONE_STEP * (float)i) * t.y;
-        if (_fabs(u0 - cz) < 1.5f * lw * du && ((py / 12) % 2 == 0)) return make_float4(0.40f, 0.40f, 0.40f, 1.0f);
-    }
+    float onR = (_fabs(v - c0.x) / dv < 2.0f * lw * _sqrtf(1.0f + kr * kr)) ? 1.0f : 0.0f;
+    float onG = (_fabs(v - c0.y) / dv < 2.0f * lw * _sqrtf(1.0f + kg * kg)) ? 1.0f : 0.0f;
+    float onB = (_fabs(v - c0.z) / dv < 2.0f * lw * _sqrtf(1.0f + kb * kb)) ? 1.0f : 0.0f;
+    if (onR + onG + onB > 0.0f) return make_float4(0.95f * onR, 0.95f * onG, 0.95f * onB, 0.8f);
+    if (_fabs(u0 - t.x) < 1.5f * lw * du) return make_float4(0.95f, 0.95f, 0.95f, 0.6f);
     return make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+}
+
+
+__DEVICE__ float3 McpOver(float3 y, float4 ov)
+{
+    return make_float3(y.x + ov.w * (ov.x - y.x), y.y + ov.w * (ov.y - y.y), y.z + ov.w * (ov.z - y.z));
 }
 
 
@@ -300,12 +326,7 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
     float3 z0 = make_float3(uiLoR, uiLoG, uiLoB), z1 = make_float3(uiLoMidR, uiLoMidG, uiLoMidB);
     float3 z2 = make_float3(uiMidR, uiMidG, uiMidB), z3 = make_float3(uiHiMidR, uiHiMidG, uiHiMidB);
     float3 z4 = make_float3(uiHiR, uiHiG, uiHiB);
-    if (uiNeutral > 0.0f)
-    {
-        float m = (z2.x + z2.y + z2.z) * (1.0f / 3.0f), n = uiNeutral * 0.01f;
-        z2 = make_float3(z2.x - n * (z2.x - m), z2.y - n * (z2.y - m), z2.z - n * (z2.z - m));
-    }
-    float4 g = make_float4(uiBlend, uiPivot, uiCleanBlacks, uiCleanWhites);
+    float4 g = make_float4(uiBlend, uiNeutral, uiCleanBlacks, uiCleanWhites);
     float piv = McpTfEncode(MCP_MIDGRAY * _exp2f(uiPivot), uiInput);
     float stop = McpTfEncode(2.0f * MCP_MIDGRAY, uiInput) - McpTfEncode(MCP_MIDGRAY, uiInput);
     float3 t = make_float3(piv, stop, (McpTfEncode(0.0f, uiInput) - piv) / stop);
@@ -313,25 +334,26 @@ __DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y, float p
                uiLoMidB != 0.0f || uiMidR != 0.0f || uiMidG != 0.0f || uiMidB != 0.0f || uiHiMidR != 0.0f ||
                uiHiMidG != 0.0f || uiHiMidB != 0.0f || uiHiR != 0.0f || uiHiG != 0.0f || uiHiB != 0.0f) &&
               uiBlend != 0.0f;
-    if (uiShowCurves)
-    {
-        float4 ov = McpCurves(p_X, p_Y, p_Width, p_Height, z0, z1, z2, z3, z4, t, g, uiSatMask);
-        if (ov.w > 0.0f) return McpFromWork(make_float3(ov.x, ov.y, ov.z), uiInput);
-    }
     float3 y = McpToWork(c, uiInput);
+    float4 ov = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+    if (uiShowCurves) ov = McpCurves(p_X, p_Y, p_Width, p_Height, z0, z1, z2, z3, z4, t, g, uiSatMask);
     if (uiShowRamp && p_Y >= p_Height - p_Height / 12)
     {
         float u = ((float)p_X + 0.5f) / (float)p_Width;
         y = make_float3(u, u, u);
-        return McpFromWork(any ? McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask) : y, uiInput);
+        y = any ? McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask) : y;
+        if (ov.w > 0.0f) y = McpOver(y, ov);
+        return McpFromWork(y, uiInput);
     }
     if (uiShowSatMask)
     {
         float lum = 0.3f * y.x + 0.6f * y.y + 0.1f * y.z;
         float kept = 1.0f - McpSatKeep(y, stop, uiSatMask);
-        return McpFromWork(make_float3(lum + kept * 0.25f * stop, lum - kept * 1.5f * stop, lum + kept * 0.25f * stop),
-                           uiInput);
+        y = make_float3(lum + kept * 0.25f * stop, lum - kept * 1.5f * stop, lum + kept * 0.25f * stop);
+        if (ov.w > 0.0f) y = McpOver(y, ov);
+        return McpFromWork(y, uiInput);
     }
+    if (ov.w > 0.0f) return McpFromWork(McpOver(any ? McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask) : y, ov), uiInput);
     if (!any) return c;
     return McpFromWork(McpTone(y, z0, z1, z2, z3, z4, t, g, uiSatMask), uiInput);
 }
