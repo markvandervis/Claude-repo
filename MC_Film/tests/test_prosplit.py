@@ -42,6 +42,7 @@ def zone_ui(zones):
 
 
 def run(px, zones=None, **kw):
+    kw.setdefault("uiShowCurves", 0)          # on by default in Resolve; off unless a test asks for it
     ui = {UI.get(k, k): v for k, v in kw.items()}
     if zones is not None:
         ui.update(zone_ui(zones))
@@ -91,15 +92,16 @@ def test_static():
     tips = re.findall(r"^DEFINE_UI_TOOLTIP\((\w+),", src, re.M)
     check(sorted(params) == sorted(tips), "every control has one tooltip")
     labels = re.findall(r"^DEFINE_UI_PARAMS\(\w+, ([^,]+), DCTLUI_SLIDER", src, re.M)
-    zl = ["%s %s" % (z, c) for z in ("Hi", "Hi-Mid", "Mid", "Lo-Mid", "Lo") for c in ("Red", "Green", "Blue")]
+    zl = ["%s %s" % (z, c) for z in ("Hi", "Hi-Mid", "Mid", "Lo-Mid", "Lo") for c in ("\U0001F534", "\U0001F7E2", "\U0001F535")]
     check(labels == zl + ["Blend", "Pivot", "Neutral Pivot", "Clean Blacks", "Clean Whites", "Sat Mask"],
-          "sliders: five zones x RGB from Hi to Lo, then Blend, Pivot, Neutral Pivot, Clean Blacks / Whites, Sat Mask")
+          "sliders: five zones x red / green / blue dots from Hi to Lo, then Blend, Pivot, Neutral Pivot, Clean Blacks / Whites, Sat Mask")
     code = re.sub(r"//.*", "", src)
     intr = set(re.findall(r"\b(_[a-z][a-z0-9]*)\s*\(", code))
     check("_exp10f" not in code and intr <= {"_fmaxf", "_fminf", "_fabs", "_sqrtf", "_powf", "_exp2f", "_log2f",
                                              "_expf", "_saturatef", "_clampf", "_floor"},
           "only standard intrinsics, no _exp10f (%s)" % sorted(intr))
     check("@@" not in src and not re.search(r"\bdouble\b", code), "no template fields, no double precision")
+    check("DEFINE_UI_PARAMS(uiShowCurves, Show Curves, DCTLUI_CHECK_BOX, 1)" in src, "Show Curves is on by default")
 
 
 def test_identity():

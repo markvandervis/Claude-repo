@@ -65,7 +65,7 @@ DEFINE_UI_TOOLTIP(uiSatMask, "Keeps the toning off saturated colours, in percent
 
 DEFINE_UI_PARAMS(uiBypass, Bypass, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiBypass, "Return the input unchanged.")
-DEFINE_UI_PARAMS(uiShowCurves, Show Curves, DCTLUI_CHECK_BOX, 0)
+DEFINE_UI_PARAMS(uiShowCurves, Show Curves, DCTLUI_CHECK_BOX, 1)
 DEFINE_UI_TOOLTIP(uiShowCurves, "Draws the red, green and blue curves of a grey ramp over the whole frame (input code value left to right, output bottom to top) and the middle grey (Pivot) line. The curves are see-through and add up: unchanged they form one white line, green + blue = cyan.")
 DEFINE_UI_PARAMS(uiShowSatMask, Highlight Sat Mask, DCTLUI_CHECK_BOX, 0)
 DEFINE_UI_TOOLTIP(uiShowSatMask, "Shows the picture in grey with the colours that Sat Mask keeps out of the toning painted magenta.")

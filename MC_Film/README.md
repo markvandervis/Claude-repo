@@ -161,9 +161,9 @@ They sit in the full film chain shown above (Halation before MC Film Negative, G
 - Halation: an even field is untouched, nothing ever darkens, no cyan cores on any gauge, the halo colour, gauge scaling and the threshold.
 - Both DCTLs match the Python reference (`tools/mcfilm_effects.py`).
 
-## MC Pro Split v0.7 (RGB split tone, five zones)
+## MC Pro Split v0.8 (RGB split tone, five zones)
 
-`MC_Pro-Split-v0.7.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It is made to sit in a PowerGrade, and it will be part of the OFX plugin.
+`MC_Pro-Split-v0.8.dctl` is an RGB split tone: a red, green and blue offset for each of five tonal zones, Hi, Hi-Mid, Mid, Lo-Mid and Lo. It is made to sit in a PowerGrade, and it will be part of the OFX plugin.
 
 **PowerGrade order (DaVinci Wide Gamut):**
 
@@ -175,7 +175,7 @@ They sit in the full film chain shown above (Halation before MC Film Negative, G
 
 It works directly on the log code values of the chosen **Transfer Function**, in the image's own gamut, so each offset is an exposure shift of that channel. The transfer function sets middle grey (TF(0.18)) and the size of a stop, so the zones land in the same place whatever the log curve.
 
-The five zones are broad and overlap. They lie between four soft boundaries at ±0.6 and ±1.9 stops from the Pivot. Towards white the highlight zones work like the reference: Hi-Mid keeps part of its strength up to white, and Hi keeps growing. With every zone at 0, the node returns its input unchanged, bit for bit. A grey ramp doesn't reverse for any single zone at ±100, any mix within ±50, or neighbouring zones at opposite ±100.
+The five zones are broad and overlap. They lie between four soft boundaries at ±0.6 and ±1.9 stops from the Pivot. Towards white the highlight zones work like the reference: Hi-Mid keeps part of its strength up to white, and Hi keeps growing. With every zone at 0 (and Show Curves off), the node returns its input unchanged, bit for bit. A grey ramp doesn't reverse for any single zone at ±100, any mix within ±50, or neighbouring zones at opposite ±100.
 
 **Matched to the reference.** Zone width and strength, and the way Clean Blacks works, were fitted to curve measurements of a reference RGB split tone: Lo Red −100 at Clean Blacks 30, 51, 67 and 100, and a five-zone setting with Neutral Pivot 31.8 at Clean Whites 30, 58 and 69. Ours matches the Lo zone within about 0.007 code value, and the five-zone curve within about 0.01.
 - **Lo at −100:** about 1.3 stops at its peak, still a little over half of that at middle grey, and fading out above +2.5 stops.
@@ -185,19 +185,19 @@ The five zones are broad and overlap. They lie between four soft boundaries at �
 
 | Control | What it does |
 |---|---|
-| Hi / Hi-Mid / Mid / Lo-Mid / Lo Red, Green, Blue | Offset per channel per zone, −100 to +100 (Lo / Hi at 100 ≈ 1.3–1.8 stops towards the ends, the inner zones ≈ 0.4 stop at their centre) |
+| Hi / Hi-Mid / Mid / Lo-Mid / Lo 🔴 🟢 🔵 | Offset per channel per zone, −100 to +100 (Lo / Hi at 100 ≈ 1.3–1.8 stops towards the ends, the inner zones ≈ 0.4 stop at their centre) |
 | Blend | Strength of the whole split tone, in % |
 | Pivot | Centre of the Mid zone in stops from middle grey; all zones move with it |
 | Neutral Pivot | Keeps a band around the Pivot neutral; the higher, the wider (31.8 fades back in over about 2 stops either side) |
 | Clean Blacks | How far up from black the toning is faded out (default 30) |
 | Clean Whites | Fades the toning out towards white, gently: 30 leaves normal footage alone, about 70 halves it at white (default 30) |
 | Sat Mask | Keeps the toning off saturated colours, in % |
-| Show Curves | Red, green and blue curves of a grey ramp over the whole frame and the middle grey line. The lines are see-through and add up: unchanged they form one white line, pulling red down leaves cyan + red |
+| Show Curves | On by default. Red, green and blue curves of a grey ramp over the whole frame and the middle grey line. The lines are see-through and add up: unchanged they form one white line, pulling red down leaves cyan + red |
 | Highlight Sat Mask | The picture in grey, with the colours Sat Mask keeps out painted magenta |
 | Show Ramp | A toned grey ramp along the bottom of the frame |
 | Transfer Function | DaVinci Intermediate (default), ACEScct, ARRI LogC3, ARRI LogC4, Sony S-Log3, Panasonic V-Log, Canon Log 3, RED Log3G10, Cineon Log, Scene Linear |
 
-`docs/prosplit.png` shows a test chart before and after, and with Show Curves on. `python3 tests/test_prosplit.py` checks it (57 checks):
+`docs/prosplit.png` shows a test chart before and after, and with Show Curves on. `python3 tests/test_prosplit.py` checks it (58 checks):
 - Identity at defaults for every transfer function, and DCTL == reference for every transfer function.
 - Grey ramps never reverse for extreme and random zone settings.
 - Every zone acts only where it should, and every control and view acts in the right direction.
@@ -208,7 +208,7 @@ The full feature-by-feature status is in `docs/FEATURES.md`.
 
 **DCTLs: colour, per pixel (next)**
 - ~~Bleach Bypass~~ (done in Core v0.2)
-- ~~Cast & Crossover~~ (done: MC Pro Split v0.7, an RGB split tone in five zones)
+- ~~Cast & Crossover~~ (done: MC Pro Split v0.8, an RGB split tone in five zones)
 - ~~Film Sat~~ (done in Core v0.2), Tone Core, Curves
 - Palette (harmoniser)
 - Balance (skin-driven white balance and exposure; reuses the MC Skin Guard qualifier)
